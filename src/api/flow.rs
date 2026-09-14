@@ -11,6 +11,7 @@ use crate::track::generator::build as gen_track;
 use crate::track::wire::{build_obs_object, five_point_wrapper, obs_keys};
 use serde_json::Value;
 
+#[derive(Clone, Copy)]
 pub struct RunParams {
     /// 距离（米）与时长（秒）已由 UI 参数解析。
     pub dist: f64,
@@ -69,6 +70,23 @@ pub fn run_full_flow(
 
     // ③ 轨迹生成（打卡点拟合环）
     let pts_bd = points::points_bd(&pts);
+    // 平均配速须落在有效窗口内（否则逐点速度无法全窗内），越界时修正时长
+    let mut params = *params;
+    let avg = params.dist / params.dur as f64;
+    let fixed_avg = avg.clamp(
+        crate::track::generator::SPEED_FLOOR + 0.1,
+        crate::track::generator::SPEED_CEIL - 0.1,
+    );
+    if (fixed_avg - avg).abs() > 1e-6 {
+        let fixed_dur = (params.dist / fixed_avg).round() as i64;
+        log(&format!(
+            "[track] 平均配速 {} m/s 超出有效窗口，时长 {} -> {}s",
+            (avg * 100.0).round() / 100.0,
+            params.dur,
+            fixed_dur
+        ));
+        params.dur = fixed_dur;
+    }
     log(&format!(
         "[track] 生成轨迹 {:.0}m / {}s（{} 点位拟合环）…",
         params.dist,

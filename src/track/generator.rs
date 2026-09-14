@@ -10,6 +10,28 @@ use super::geom::{fmt_gain_time, make_point_ring, ring_point_at, round_to, to_bd
 use super::model::{GenPoint, Segment, TenWindow, Track};
 use super::postfix::apply_post_fixes;
 
+/// 有效配速窗口（判定规则 2'21"-10'00"/km ≈ 1.667-7.092 m/s），硬边界留余量。
+pub const SPEED_FLOOR: f64 = 1.90;
+pub const SPEED_CEIL: f64 = 6.30;
+
+/// 等比缩放逐点速度至目标总距：越界点钳在窗口边界，剩余差量由未饱和点分摊（迭代收敛）。
+/// 与整体等比缩放的区别：任何一点的瞬时配速都不会越出有效窗口。
+fn fit_speeds(w: &mut [f64], dts: &[f64], target: f64) {
+    for _ in 0..24 {
+        let cur: f64 = w.iter().zip(dts).map(|(x, dt)| x * dt).sum();
+        if (cur - target).abs() <= 1.0 {
+            break;
+        }
+        let k = target / cur;
+        for x in w.iter_mut() {
+            *x = (*x * k).clamp(SPEED_FLOOR, SPEED_CEIL);
+        }
+    }
+    for x in w.iter_mut() {
+        *x = x.clamp(SPEED_FLOOR, SPEED_CEIL);
+    }
+}
+
 /// 轨迹生成主入口。points_bd 为 BD 系打卡点。
 pub fn build(
     dist: f64,
@@ -77,16 +99,14 @@ pub fn build(
             + 0.015 * (std::f64::consts::TAU * tt / 19.0 + phase_v * 3.7).sin())
             * dip_factor(tt);
         let noise = 1.0 + rng.gauss(0.0, 0.008);
-        w.push((base * ramp * fatigue * wave * noise).max(0.05));
+        w.push(base * ramp * fatigue * wave * noise);
     }
     let mut dts: Vec<f64> = (0..n - 1).map(|i| times[i + 1] - times[i]).collect();
     dts.push(1.0f64.max(dur_f - times[n - 1]));
-    let mut seg_dist: Vec<f64> = (0..n).map(|i| w[i] * dts[i]).collect();
-    let scale = dist / seg_dist.iter().sum::<f64>();
-    for v in seg_dist.iter_mut() {
-        *v *= scale;
-    }
-    let speeds: Vec<f64> = (0..n).map(|i| seg_dist[i] / dts[i]).collect();
+    // 逐点速度全部约束在有效配速窗口内，并精确命中目标距离
+    fit_speeds(&mut w, &dts, dist);
+    let seg_dist: Vec<f64> = (0..n).map(|i| w[i] * dts[i]).collect();
+    let speeds: Vec<f64> = w.clone();
 
     let tl_w = [((-1i64, 4i64), 54u32), ((-1, 1), 27), ((-1, 12), 13), ((-1, 5), 3), ((-1, 6), 2)];
     let mut kinds: Vec<(i64, i64)> = Vec::with_capacity(n);
@@ -229,13 +249,26 @@ pub fn build(
         steps_acc += cad / 60.0 * dt;
         let nxt = pos(s + direction * 2.0);
         let brg = ((nxt.0 - x).atan2(nxt.1 - y).to_degrees() + rng.gauss(0.0, 35.0)).rem_euclid(360.0);
-        let avg_sp = round_to(d_step / dt, 4);
-        let kmh = avg_sp * 3.6;
-        let sigma = (kmh * 0.08).max(0.05);
-        let gps_speed = if rng.random() < 0.20 {
-            0.0
+        // 异常点（-1）：avgSpeed 为累计均值（真人与此一致，不为 0）；
+        // GPS 瞬时速度多为低速，偶发 15-46 km/h 漂移尖峰
+        let (avg_sp, gps_speed) = if typ == -1 {
+            let avg = round_to(dist_acc / t_acc.max(1.0), 4);
+            let gps = if rng.random() < 0.12 {
+                rng.uniform(15.0, 46.0)
+            } else {
+                rng.uniform(0.5, 6.0)
+            };
+            (avg, round_to(gps, 4))
         } else {
-            round_to((kmh + rng.gauss(0.0, sigma)).max(0.0), 4)
+            let avg = round_to(d_step / dt, 4);
+            let kmh = avg * 3.6;
+            let sigma = (kmh * 0.08).max(0.05);
+            let gps = if rng.random() < 0.20 {
+                0.0
+            } else {
+                round_to((kmh + rng.gauss(0.0, sigma)).max(0.0), 4)
+            };
+            (avg, gps)
         };
 
         ten_t += dt;

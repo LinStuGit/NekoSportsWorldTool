@@ -15,3 +15,6 @@ docs/_preview.png
 /docs
 /fixtures
 /ai_sports.json
+/obs_*.json
+/rec_all.tmp
+/msg.txt

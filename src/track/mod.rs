@@ -99,6 +99,39 @@ mod tests {
         }
     }
 
+    /// 10 秒窗均值配速全部落在有效窗口内（判定规则 2'21"-10'00"/km），且总距精确。
+    /// 逐点 avgSpeed 允许越界（真人爬坡期同样低于窗口，见 OBS 样本）。
+    #[test]
+    fn test_speeds_within_valid_pace_window() {
+        let pts = sample_points();
+        let combos = [
+            (1050.0, 480i64),
+            (1440.0, 661),
+            (1920.0, 719),
+            (2100.0, 900),
+            (3300.0, 1220),
+        ];
+        for seed in 0..16u64 {
+            for &(dist, dur) in &combos {
+                let t = build(dist, dur, seed, (38.9, 121.54), 1_788_958_186_123, &pts);
+                for (i, w) in t.speedPerTenSec.iter().enumerate() {
+                    let pace = 1000.0 / (w.value / 10.0); // 秒/km
+                    assert!(
+                        (141.0..=600.0).contains(&pace),
+                        "seed={seed} dist={dist} 窗{i} 配速 {}/km 越界",
+                        format_args!("{}:{:02}", pace as i64 / 60, (pace as i64) % 60)
+                    );
+                }
+                assert!(
+                    (t.totalDistance - dist).abs() < 2.0,
+                    "seed={seed} dist={}: {}",
+                    dist,
+                    t.totalDistance
+                );
+            }
+        }
+    }
+
     /// BD→GCJ 实测向量。
     #[test]
     fn test_bd09_to_gcj02_vector() {

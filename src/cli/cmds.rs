@@ -15,6 +15,10 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "ai" => cmd_ai(&rest),
         "ai-list" => cmd_ai_list(),
         "records" => cmd_records(),
+        "records-raw" => cmd_records_raw(&rest),
+        "record-info" => cmd_record_info(&rest),
+        "obs-get" => cmd_obs_get(&rest),
+        "obs-sample" => cmd_obs_sample(&rest),
         "ai-records" => cmd_ai_records(&rest),
         "ai-info" => cmd_ai_info(&rest),
         "semester" => cmd_semester(),
@@ -236,6 +240,166 @@ fn cmd_records() -> i32 {
             1
         }
     }
+}
+
+/// 记录列表原始探测：支持自定义 body，打印条数与日期范围。
+fn cmd_records_raw(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let body = get(&flags, "body").unwrap_or("{}").to_string();
+    let mut client = match make_client() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    match client.call("POST", crate::api::records::RECORDS_PATH, &body, &[]) {
+        Ok(biz) => {
+            let data = crate::api::client::parse_data_field(&biz);
+            let arr = data.as_array().cloned().unwrap_or_default();
+            let n = arr.len();
+            println!("条数: {n}");
+            if let Some(out) = get(&flags, "out") {
+                std::fs::write(out, serde_json::to_string_pretty(&arr).unwrap_or_default())
+                    .map_err(|e| eprintln!("写入失败: {e}"))
+                    .ok();
+                println!("已保存 {out}");
+            } else if n > 0 {
+                println!("首条: {}", &arr[0].to_string()[..arr[0].to_string().len().min(300)]);
+                println!("末条: {}", &arr[n - 1].to_string()[..arr[n - 1].to_string().len().min(300)]);
+            } else {
+                println!("data: {}", data.to_string()[..data.to_string().len().min(500)].to_string());
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("拉取失败: {e}");
+            1
+        }
+    }
+}
+
+/// 拉取 OBS 对象（签名 GET），解码 gzip+base64 字段后保存。
+fn cmd_obs_get(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let Some(key) = get(&flags, "key") else {
+        eprintln!("缺少 --key");
+        return 1;
+    };
+    let mut client = match make_client() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let mut log = |s: &str| eprintln!("{s}");
+    match crate::api::obs::fetch_object(&mut client, key, &mut log) {
+        Ok(v) => {
+            let out = get(&flags, "out").unwrap_or("obs_real.json");
+            // 解码 gzip+base64 值便于直接阅读
+            let decoded = decode_gz_fields(&v);
+            std::fs::write(out, serde_json::to_string_pretty(&decoded).unwrap_or_default())
+                .map_err(|e| eprintln!("写入失败: {e}"))
+                .ok();
+            println!("已保存 {out}");
+            0
+        }
+        Err(e) => {
+            eprintln!("拉取失败: {e}");
+            1
+        }
+    }
+}
+
+/// 解码 OBS 对象中 gzip+base64 的字段值（尽力而为）。
+fn decode_gz_fields(v: &serde_json::Value) -> serde_json::Value {
+    use base64::Engine;
+    let mut out = v.clone();
+    if let Some(obj) = out.as_object_mut() {
+        for (_k, val) in obj.iter_mut() {
+            if let Some(s) = val.as_str() {
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(s)
+                    .ok()
+                    .and_then(|raw| {
+                        let mut dec = flate2::read::GzDecoder::new(raw.as_slice());
+                        use std::io::Read;
+                        let mut txt = String::new();
+                        dec.read_to_string(&mut txt).ok()?;
+                        Some(txt)
+                    });
+                if let Some(txt) = decoded {
+                    let parsed = serde_json::from_str::<serde_json::Value>(&txt)
+                        .map(|x| x.to_string())
+                        .unwrap_or(txt);
+                    *val = serde_json::Value::String(parsed);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 本地生成一份 OBS 对象样本（不提交；结构对照用）。
+fn cmd_obs_sample(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let dist = get(&flags, "dist").and_then(|v| v.parse::<f64>().ok()).unwrap_or(1050.0);
+    let dur = get(&flags, "dur").and_then(|v| v.parse::<i64>().ok()).unwrap_or(480);
+    let rrid = get(&flags, "rrid").and_then(|v| v.parse::<i64>().ok()).unwrap_or(1320000000);
+    let seed = get(&flags, "seed").and_then(|v| v.parse::<u64>().ok()).unwrap_or(7);
+    let mut client = match make_client() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let mut log = |s: &str| eprintln!("{s}");
+    let pts = match crate::api::points::fetch_points(&mut client, (0.0, 0.0), &mut log) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("点位拉取失败: {e}");
+            return 1;
+        }
+    };
+    let pts_bd = crate::api::points::points_bd(&pts);
+    let start_ms = crate::crypto::envelope::now_ms() - dur * 1000;
+    let track = crate::track::generator::build(dist, dur, seed, (0.0, 0.0), start_ms, &pts_bd);
+    let sess = client.login.clone().unwrap_or_default();
+    let uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
+    let obj = crate::track::wire::build_obs_object(&track, rrid, &uuid, sess.uid, &pts);
+    let out = get(&flags, "out").unwrap_or("obs_ours.json");
+    let decoded = decode_gz_fields(&obj);
+    std::fs::write(out, serde_json::to_string_pretty(&decoded).unwrap_or_default())
+        .map_err(|e| eprintln!("写入失败: {e}"))
+        .ok();
+    println!("已保存 {out}");
+    0
+}
+
+/// 单条跑步记录原始详情。
+fn cmd_record_info(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let Some(rrid) = get(&flags, "rrid").and_then(|v| v.parse::<i64>().ok()) else {
+        eprintln!("缺少 --rrid");
+        return 1;
+    };
+    let mut client = match make_client() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    match crate::api::records::fetch_one_record(&mut client, rrid) {
+        Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default()),
+        Err(e) => {
+            eprintln!("拉取失败: {e}");
+            return 1;
+        }
+    }
+    0
 }
 
 /// 单条 AI 记录全量详情。

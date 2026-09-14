@@ -128,9 +128,9 @@ impl App {
             });
             ui.horizontal(|ui| {
                 ui.label("配速范围（秒/km）：");
-                ui.add(egui::DragValue::new(&mut page.pace_min).range(180..=900).speed(5));
+                ui.add(egui::DragValue::new(&mut page.pace_min).range(180..=520).speed(5));
                 ui.label("至");
-                ui.add(egui::DragValue::new(&mut page.pace_max).range(180..=900).speed(5));
+                ui.add(egui::DragValue::new(&mut page.pace_max).range(180..=520).speed(5));
             });
             ui.horizontal(|ui| {
                 ui.label("开始时间：");

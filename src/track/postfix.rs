@@ -17,9 +17,10 @@ pub fn apply_post_fixes(locs: &mut [GenPoint], rng: &mut Rng, start_ms: i64) {
             let stop_t = locs[ci].totalTime + rng.randint(6, 14);
             locs[ci].totalTime = stop_t;
             locs[ci].validTime = stop_t;
-            let stop_kmh = round_to(rng.uniform(1.2, 2.6), 4);
-            locs[ci].speed = stop_kmh;
-            locs[ci].avgSpeed = round_to(stop_kmh / 3.6, 4);
+            // 收尾减速仍须落在有效配速窗口内（2.0-2.6 m/s ≈ 7.2-9.4 km/h）
+            let stop_ms = round_to(rng.uniform(2.0, 2.6), 4);
+            locs[ci].speed = round_to(stop_ms * 3.6, 4);
+            locs[ci].avgSpeed = stop_ms;
             locs[ci].bdS = round_to(rng.uniform(0.05, 0.15), 3);
             locs[ci].gainTime = fmt_gain_time(start_ms + stop_t * 1000);
             locs[ci].gainTimeMs = start_ms + stop_t * 1000;
@@ -47,19 +48,20 @@ pub fn apply_post_fixes(locs: &mut [GenPoint], rng: &mut Rng, start_ms: i64) {
         e.ptype = 6;
         e.locType = 1;
         e.radius = round_to(rng.uniform(1.5, 3.0), 2);
-        // 后半段散布 type=1/2（67-99% 行程区间）
+        // 后半段散布 type=1/2/8（67-99% 行程区间；type=8 真人低频出现）
         let from = (locs.len() as f64 * 0.67) as usize;
         for i in from..locs.len().saturating_sub(2) {
             if rng.random() < 0.06 {
-                locs[i].ptype = rng.choice(&[1, 1, 2]);
+                locs[i].ptype = rng.choice(&[1, 1, 2, 8]);
                 locs[i].locType = 1;
             }
         }
     }
-    // 边界修正①：索引2 首个真实点 avgSpeed 不跨哨兵计算
+    // 边界修正①：索引2 首个真实点 avgSpeed 不跨哨兵计算，并保持在有效窗口内
     if locs.len() > 3 {
         let p2 = &mut locs[2];
-        p2.avgSpeed = round_to(p2.totalDis / 1.0f64.max(p2.totalTime as f64), 4);
+        p2.avgSpeed = round_to(p2.totalDis / 1.0f64.max(p2.totalTime as f64), 4)
+            .clamp(crate::track::generator::SPEED_FLOOR, crate::track::generator::SPEED_CEIL);
         p2.speed = round_to(p2.avgSpeed * 3.6, 4);
     }
     // 首点 = 起点：totalTime=0、type∈{0,7}、速度取首个非零值
@@ -78,7 +80,7 @@ pub fn apply_post_fixes(locs: &mut [GenPoint], rng: &mut Rng, start_ms: i64) {
             }
         }
         if locs[0].speed == 0.0 {
-            locs[0].speed = round_to(rng.uniform(6.0, 14.0), 4);
+            locs[0].speed = round_to(rng.uniform(7.0, 13.0), 4);
         }
     }
 }

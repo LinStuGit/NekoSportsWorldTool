@@ -110,7 +110,8 @@ pub fn five_point_wrapper(points: &[Value], start_ms: i64) -> String {
     .to_string()
 }
 
-/// 10s 时间窗，id=(rrid%100000)*1000+hi。
+/// 10s 时间窗，id=(rrid%100000)*1000+窗口序秒（6 个真人样本跨 9 月记录验证一致；
+/// 旧版 App 样本为全局序号，不适用当前版本）。
 fn build_windows(track: &Track, rrid: i64) -> (Vec<Value>, Vec<Value>) {
     let start_ms = track.startTime;
     let total_time = track.totalTime;
@@ -141,7 +142,7 @@ fn build_windows(track: &Track, rrid: i64) -> (Vec<Value>, Vec<Value>) {
             "minDiff": 1000.0,
             "queueNum": 0,
             "state": 0,
-            "stepsNum": b.value,
+            "stepsNum": b.value as i64,
         }));
     }
     (sp, stf)
