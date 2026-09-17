@@ -67,6 +67,12 @@ impl App {
                 );
                 ui.end_row();
 
+                ui.label("城市：");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.device_buf.city).desired_width(120.0),
+                );
+                ui.end_row();
+
                 ui.label("定位锚点纬度：");
                 ui.add(
                     egui::DragValue::new(&mut self.device_buf.anchor_lat)
@@ -117,10 +123,11 @@ impl App {
         );
         ui.add_space(4.0);
         ui.label(format!(
-            "当前生效身份：{} / {} / {} / 锚点({:.6},{:.6})",
+            "当前生效身份：{} / {} / {} / 城市 {} / 锚点({:.6},{:.6})",
             if self.identity.platform == "android" { "Android" } else { "iOS" },
             self.identity.device_name,
             self.identity.os_version,
+            self.identity.city,
             self.identity.anchor_lat,
             self.identity.anchor_lon,
         ));
