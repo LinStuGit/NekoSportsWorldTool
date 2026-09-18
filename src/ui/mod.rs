@@ -91,6 +91,8 @@ impl eframe::App for App {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_messages();
+        #[cfg(target_os = "android")]
+        self.poll_device_info();
         crate::platform::set_keep_screen_on(self.run_busy || self.ai_busy || self.login_busy);
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
@@ -326,6 +328,8 @@ impl App {
             app.log.push("未找到中文字体（msyh/simhei/simsun），界面中文可能显示为方块");
         }
         app.fetch_ip();
+        #[cfg(target_os = "android")]
+        crate::android::request_device_info(true);
         // AI 项目列表先上缓存，网络刷新后覆盖
         app.ai_page.list = crate::api::model::load_ai_sports().unwrap_or_default();
         if app.session.is_some() {

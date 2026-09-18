@@ -122,7 +122,20 @@ fn write_json<T: serde::Serialize>(name: &str, value: &T) -> Result<(), String> 
 /// 加载设备身份；device_id / app_install_time 缺失时生成一次并立即落盘，
 /// 此后同一设备全生命周期复用（逐请求漂移会影响设备一致性）。
 pub fn load_identity() -> HeaderIdentity {
-    let mut id: HeaderIdentity = read_json("identity.json").unwrap_or_default();
+    load_identity_for_platform(if cfg!(target_os = "android") { "android" } else { "ios" })
+}
+
+fn load_identity_for_platform(platform: &str) -> HeaderIdentity {
+    let mut id: HeaderIdentity = read_json("identity.json").unwrap_or_else(|| {
+        let mut identity = HeaderIdentity::default();
+        if platform == "android" {
+            identity.platform = "android".into();
+            // Generic fallback until the user opts in or fills the fields manually.
+            identity.device_name = "Android".into();
+            identity.os_version = "16".into();
+        }
+        identity
+    });
     let mut dirty = false;
     if id.device_id.is_empty() {
         id.device_id = uuid::Uuid::new_v4().to_string().to_uppercase();
@@ -141,6 +154,26 @@ pub fn load_identity() -> HeaderIdentity {
         let _ = save_identity(&id);
     }
     id
+}
+
+#[cfg(any(target_os = "android", test))]
+#[derive(Debug, serde::Deserialize)]
+pub struct DeviceInfo {
+    pub manufacturer: String,
+    pub model: String,
+    pub os_version: String,
+}
+
+#[cfg(any(target_os = "android", test))]
+pub fn identity_with_device_info(identity: &HeaderIdentity, info: &DeviceInfo) -> Result<HeaderIdentity, String> {
+    if info.model.trim().is_empty() || info.os_version.trim().is_empty() {
+        return Err("未能读取完整的机型和系统版本，请手动填写".into());
+    }
+    let mut updated = identity.clone();
+    updated.platform = "android".into();
+    updated.device_name = info.model.trim().into();
+    updated.os_version = info.os_version.trim().into();
+    Ok(updated)
 }
 
 pub fn save_identity(id: &HeaderIdentity) -> Result<(), String> {
@@ -179,6 +212,63 @@ pub fn save_config(c: &Config) -> Result<(), String> {
 #[cfg(test)]
 mod storage_tests {
     use super::*;
+
+    #[test]
+    fn android_identity_defaults_and_device_import_preserve_persisted_uuid() {
+        let directory = std::env::temp_dir().join(format!("neko-identity-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = Some(directory.clone()));
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = None);
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory);
+        let first = load_identity_for_platform("android");
+        assert_eq!(first.platform, "android");
+        assert_ne!(first.device_name, "iPhone");
+        assert!(uuid::Uuid::parse_str(&first.device_id).is_ok());
+        let again = load_identity_for_platform("android");
+        assert_eq!(serde_json::to_value(&first).unwrap(), serde_json::to_value(&again).unwrap());
+
+        let mut existing = first.clone();
+        existing.platform = "ios".into();
+        existing.device_name = "Existing manual name".into();
+        existing.idfa = "manual-value".into();
+        save_identity(&existing).unwrap();
+        let loaded = load_identity_for_platform("android");
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), serde_json::to_value(&existing).unwrap(),
+            "opening an existing install must not overwrite a manual identity");
+
+        let info: DeviceInfo = serde_json::from_str(
+            r#"{"manufacturer":"Example","model":"Phone 16","os_version":"16"}"#,
+        ).unwrap();
+        assert_eq!(info.manufacturer, "Example");
+        let imported = identity_with_device_info(&loaded, &info).unwrap();
+        assert_eq!(imported.platform, "android");
+        assert_eq!(imported.device_name, "Phone 16");
+        assert_eq!(imported.os_version, "16");
+        let mut expected = serde_json::to_value(&existing).unwrap();
+        expected["platform"] = "android".into();
+        expected["device_name"] = "Phone 16".into();
+        expected["os_version"] = "16".into();
+        assert_eq!(serde_json::to_value(&imported).unwrap(), expected,
+            "import must preserve UUID, MAC, manual IMEI/IDFA, install time and location");
+        assert_eq!(load_identity().device_name, existing.device_name, "preview must not save implicitly");
+        save_identity(&imported).unwrap();
+        assert_eq!(load_identity().device_id, first.device_id);
+    }
+
+    #[test]
+    fn incomplete_native_device_info_cannot_replace_identity() {
+        let identity = HeaderIdentity::default();
+        for (model, os_version) in [("", "16"), ("Phone", " ")] {
+            let info = DeviceInfo { manufacturer: String::new(), model: model.into(), os_version: os_version.into() };
+            assert!(identity_with_device_info(&identity, &info).is_err());
+        }
+    }
 
     #[test]
     fn session_roundtrip_and_logout_use_private_data_directory() {

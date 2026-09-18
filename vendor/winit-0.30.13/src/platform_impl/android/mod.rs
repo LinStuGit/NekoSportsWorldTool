@@ -143,6 +143,7 @@ pub struct EventLoop<T: 'static> {
     cause: StartCause,
     ignore_volume_keys: bool,
     combining_accent: Option<char>,
+    scale_factor: f64,
 }
 
 impl<T: 'static> Drop for EventLoop<T> {
@@ -199,6 +200,7 @@ impl<T: 'static> EventLoop<T> {
             cause: StartCause::Init,
             ignore_volume_keys: attributes.ignore_volume_keys,
             combining_accent: None,
+            scale_factor: MonitorHandle::new(android_app.clone()).scale_factor(),
         })
     }
 
@@ -251,9 +253,9 @@ impl<T: 'static> EventLoop<T> {
                 },
                 MainEvent::ConfigChanged { .. } => {
                     let monitor = MonitorHandle::new(self.android_app.clone());
-                    let old_scale_factor = monitor.scale_factor();
                     let scale_factor = monitor.scale_factor();
-                    if (scale_factor - old_scale_factor).abs() < f64::EPSILON {
+                    if (scale_factor - self.scale_factor).abs() > f64::EPSILON {
+                        self.scale_factor = scale_factor;
                         let new_inner_size = Arc::new(Mutex::new(
                             MonitorHandle::new(self.android_app.clone()).size(),
                         ));

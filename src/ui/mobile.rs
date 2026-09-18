@@ -426,6 +426,44 @@ mod tests {
     }
 
     #[test]
+    fn numeric_errors_expand_rows_without_overlapping_following_controls() {
+        for width in [320.0, 360.0, 412.0] {
+            let ctx = egui::Context::default();
+            let mut rectangles = Vec::new();
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO, egui::vec2(width, 720.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(raw, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    row(ui, |ui| {
+                        for index in 0..3 {
+                            let control = numeric_control_shell(ui, 120.0, |ui| {
+                                let button = ui.add_sized([120.0, TOUCH_HEIGHT], egui::Button::new("360")).rect;
+                                let error = ui.colored_label(egui::Color32::RED,
+                                    if index == 0 { "Please enter a valid value between 10 and 200" } else { "请输入 10 到 200" }).rect;
+                                (button, error)
+                            });
+                            assert!(control.response.rect.contains_rect(control.inner.0));
+                            assert!(control.response.rect.contains_rect(control.inner.1));
+                            rectangles.push(control.response.rect);
+                        }
+                    });
+                    rectangles.push(ui.button("Next row").rect);
+                });
+            });
+            for (index, rectangle) in rectangles.iter().enumerate() {
+                assert!(rectangle.max.x <= width + 0.5, "width={width}: {rectangles:?}");
+                for other in &rectangles[index + 1..] {
+                    assert!(!rectangle.intersects(*other), "width={width}: {rectangles:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn wrapped_range_controls_reserve_width_before_the_parent_places_them() {
         for width in [360.0, 412.0] {
             let ctx = egui::Context::default();

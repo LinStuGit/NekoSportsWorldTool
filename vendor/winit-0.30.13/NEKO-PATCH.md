@@ -3,12 +3,14 @@
 Source: crates.io `winit` 0.30.13, Apache-2.0 (see LICENSE).
 Upstream commit: `e9809ef54b18499bb4f2cac945719ecc2a61061b`.
 
-Two changes are scoped to the Android backend:
+Three changes are scoped to the Android backend:
 
 - Exit the event loop on `MainEvent::Destroy`. NativeActivity's `onDestroy`
   waits for `android_main` to return, so ignoring the event blocks the UI thread.
 - Release the one-event-loop guard when the Android event loop is dropped,
   allowing a later Activity to create its own loop in the same process.
+- Cache the previous scale factor and emit `ScaleFactorChanged` only when
+  density actually changes; reading the current value twice cannot detect changes.
 
 The desktop and web runtime paths are unchanged. Upstream implementation sources
 are kept here for reproducible builds; no modifications to Cargo's global cache

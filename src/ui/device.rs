@@ -18,6 +18,42 @@ pub struct DevicePage {
 }
 
 impl App {
+    #[cfg(target_os = "android")]
+    pub(super) fn poll_device_info(&mut self) {
+        let Some(reply) = crate::android::take_device_info() else { return };
+        let info = match reply.result {
+            Ok(Some(info)) => info,
+            Ok(None) => {
+                self.status = "未读取本机信息，可在设备信息页手动填写或再次读取".into();
+                return;
+            }
+            Err(error) => { self.status = format!("× {error}"); return; }
+        };
+        let identity = if reply.initial { &self.identity } else { &self.device_buf };
+        match crate::api::model::identity_with_device_info(identity, &info) {
+            Ok(updated) => {
+                self.device_buf = updated;
+                if reply.initial {
+                    match crate::api::model::save_identity(&self.device_buf) {
+                        Ok(()) => {
+                            self.identity = self.device_buf.clone();
+                            crate::android::complete_device_info();
+                            self.status = format!("已读取 {} {} / Android {}；UUID 保持不变",
+                                info.manufacturer, info.model, info.os_version);
+                        }
+                        Err(error) => {
+                            self.tab = 5;
+                            self.status = format!("× 保存失败：{error}，请在设备页重新保存");
+                        }
+                    }
+                } else {
+                    self.status = format!("已读取 {} {}；点击保存后生效，UUID 保持不变", info.manufacturer, info.model);
+                }
+            }
+            Err(error) => self.status = format!("× {error}"),
+        }
+    }
+
     pub fn draw_device(&mut self, ui: &mut egui::Ui) {
         let mut page = std::mem::take(&mut self.device_page);
         egui::ScrollArea::vertical()
@@ -29,7 +65,6 @@ impl App {
     fn draw_device_inner(&mut self, ui: &mut egui::Ui, page: &mut DevicePage) {
         ui.add_space(6.0);
 
-        let is_ios = self.device_buf.platform != "android";
         mobile::row(ui, |ui| {
             ui.radio_value(&mut self.device_buf.platform, "ios".to_string(), "iOS");
             ui.radio_value(&mut self.device_buf.platform, "android".to_string(), "Android");
@@ -41,7 +76,13 @@ impl App {
             }
         });
 
+        #[cfg(target_os = "android")]
+        if ui.button("读取本机信息").clicked() {
+            crate::android::request_device_info(false);
+        }
+
         ui.add_space(6.0);
+        let is_ios = self.device_buf.platform != "android";
         let id_label = if is_ios { "DeviceId（UUID 大写）" } else { "DeviceId（Android）" };
         let idfa_label = if is_ios { "IDFA（可空）" } else { "IMEI（可空）" };
         let name_label = if is_ios { "设备名" } else { "机型" };
