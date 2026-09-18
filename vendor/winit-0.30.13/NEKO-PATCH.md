@@ -9,8 +9,11 @@ Two changes are scoped to the Android backend:
 - Release the one-event-loop guard when the Android event loop is dropped,
   allowing a later Activity to create its own loop in the same process.
 
-The desktop and web paths are unchanged. The complete upstream source is kept
-here for reproducible builds; no modifications to Cargo's global cache are needed.
+The desktop and web runtime paths are unchanged. Upstream implementation sources
+are kept here for reproducible builds; no modifications to Cargo's global cache
+are needed. General README, feature-list and historical release-note Markdown
+files are omitted. The changelog module links to upstream documentation instead
+of embedding those files. License and image attribution notices are retained.
 
 Regression coverage: `android/tests/SmokeInstrumentation.java` finishes the
 Activity, checks that the UI thread responds, opens a second Activity and verifies

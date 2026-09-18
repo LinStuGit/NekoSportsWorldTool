@@ -23,7 +23,6 @@ include = [
     "/build.rs",
     "/docs",
     "/examples",
-    "/FEATURES.md",
     "/LICENSE",
     "/src",
     "!/src/platform_impl/web/script",
@@ -37,7 +36,7 @@ autotests = false
 autobenches = false
 description = "Cross-platform window creation library."
 documentation = "https://docs.rs/winit"
-readme = "README.md"
+readme = false
 keywords = ["windowing"]
 categories = ["gui"]
 license = "Apache-2.0"
