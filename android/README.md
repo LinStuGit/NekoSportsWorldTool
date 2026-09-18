@@ -41,9 +41,10 @@ cargo test --lib --locked
 cargo check --locked --all-targets
 rustup target add x86_64-linux-android
 ./android/build.ps1 -Abi x86_64 -Profile debug
-# 先启动 Android 16 x86_64 模拟器，替换为它的实际序列号：
-adb -s emulator-5562 install -r ./android/build/x86_64-debug/NekoSportsWorldTool-x86_64.apk
-./android/test.ps1 -Serial emulator-5562
+# 先启动 Android 16 x86_64 模拟器，用 adb devices 查看实际序列号：
+$serial = 'emulator-5554' # 替换为你的模拟器序列号
+adb -s $serial install -r ./android/build/x86_64-debug/NekoSportsWorldTool-x86_64.apk
+./android/test.ps1 -Serial $serial
 ```
 
 `test.ps1` 仅接受显式的模拟器序列号；它测试私有目录、任务常亮开关、默认输入法连接、中文/表情组合输入、密码遮罩、数值键盘，以及 Activity 退出、重开与重建。测试不登录也不提交业务数据。

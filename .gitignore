@@ -21,6 +21,10 @@ docs/_preview.png
 /.superpowers/
 /android/build/
 /android/.signing/
+*.apk
+*.aab
+*.keystore
+*.jks
 /target-ui/
 /.android-test/
 /.worktrees/
