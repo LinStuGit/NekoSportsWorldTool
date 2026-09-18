@@ -1,7 +1,7 @@
 //! 设备信息页：iOS/Android 单选 + 6 字段 + 整套随机 + 持久化。
 //! ⚠ 设备 ID 固定复用（防 10121 风控）；随机后必须手动「保存」才生效。
 
-use super::{theme, App};
+use super::{mobile, theme, App};
 use crate::crypto::header::HeaderIdentity;
 use eframe::egui;
 
@@ -20,7 +20,9 @@ pub struct DevicePage {
 impl App {
     pub fn draw_device(&mut self, ui: &mut egui::Ui) {
         let mut page = std::mem::take(&mut self.device_page);
-        self.draw_device_inner(ui, &mut page);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| self.draw_device_inner(ui, &mut page));
         self.device_page = page;
     }
 
@@ -28,7 +30,7 @@ impl App {
         ui.add_space(6.0);
 
         let is_ios = self.device_buf.platform != "android";
-        ui.horizontal(|ui| {
+        mobile::row(ui, |ui| {
             ui.radio_value(&mut self.device_buf.platform, "ios".to_string(), "iOS");
             ui.radio_value(&mut self.device_buf.platform, "android".to_string(), "Android");
             ui.separator();
@@ -40,58 +42,57 @@ impl App {
         });
 
         ui.add_space(6.0);
-        egui::Grid::new("device_grid")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                let id_label = if is_ios { "DeviceId（UUID 大写）" } else { "DeviceId（Android）" };
+        let id_label = if is_ios { "DeviceId（UUID 大写）" } else { "DeviceId（Android）" };
+        let idfa_label = if is_ios { "IDFA（可空）" } else { "IMEI（可空）" };
+        let name_label = if is_ios { "设备名" } else { "机型" };
+        if mobile::compact_ui(ui) {
+            ui.vertical(|ui| {
                 ui.label(id_label);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.device_buf.device_id).desired_width(340.0),
-                );
-                ui.end_row();
-
-                ui.label(if is_ios { "IDFA（可空）" } else { "IMEI（可空）" });
-                ui.add(egui::TextEdit::singleline(&mut self.device_buf.idfa).desired_width(340.0));
-                ui.end_row();
-
+                mobile::text_edit(ui, "device_id", &mut self.device_buf.device_id, crate::platform::InputKind::Text, ui.available_width());
+                ui.label(idfa_label);
+                mobile::text_edit(ui, "device_idfa", &mut self.device_buf.idfa, crate::platform::InputKind::Text, ui.available_width());
                 ui.label("系统版本：");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.device_buf.os_version).desired_width(120.0),
-                );
-                ui.end_row();
-
-                ui.label(if is_ios { "设备名" } else { "机型" });
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.device_buf.device_name).desired_width(200.0),
-                );
-                ui.end_row();
-
+                mobile::text_edit(ui, "device_os", &mut self.device_buf.os_version, crate::platform::InputKind::Text, ui.available_width());
+                ui.label(name_label);
+                mobile::text_edit(ui, "device_name", &mut self.device_buf.device_name, crate::platform::InputKind::Text, ui.available_width());
                 ui.label("城市：");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.device_buf.city).desired_width(120.0),
-                );
-                ui.end_row();
-
+                mobile::text_edit(ui, "device_city", &mut self.device_buf.city, crate::platform::InputKind::Text, ui.available_width());
                 ui.label("定位锚点纬度：");
-                ui.add(
-                    egui::DragValue::new(&mut self.device_buf.anchor_lat)
-                        .speed(0.00001)
-                        .fixed_decimals(6),
-                );
-                ui.end_row();
-
+                mobile::drag_f64(ui, "device_lat", &mut self.device_buf.anchor_lat, -90.0..=90.0, 0.00001, 6);
                 ui.label("定位锚点经度：");
-                ui.add(
-                    egui::DragValue::new(&mut self.device_buf.anchor_lon)
-                        .speed(0.00001)
-                        .fixed_decimals(6),
-                );
-                ui.end_row();
+                mobile::drag_f64(ui, "device_lon", &mut self.device_buf.anchor_lon, -180.0..=180.0, 0.00001, 6);
             });
+        } else {
+            egui::Grid::new("device_grid")
+                .num_columns(2)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label(id_label);
+                    mobile::text_edit(ui, "device_id", &mut self.device_buf.device_id, crate::platform::InputKind::Text, 340.0);
+                    ui.end_row();
+                    ui.label(idfa_label);
+                    mobile::text_edit(ui, "device_idfa", &mut self.device_buf.idfa, crate::platform::InputKind::Text, 340.0);
+                    ui.end_row();
+                    ui.label("系统版本：");
+                    mobile::text_edit(ui, "device_os", &mut self.device_buf.os_version, crate::platform::InputKind::Text, 120.0);
+                    ui.end_row();
+                    ui.label(name_label);
+                    mobile::text_edit(ui, "device_name", &mut self.device_buf.device_name, crate::platform::InputKind::Text, 200.0);
+                    ui.end_row();
+                    ui.label("城市：");
+                    mobile::text_edit(ui, "device_city", &mut self.device_buf.city, crate::platform::InputKind::Text, 120.0);
+                    ui.end_row();
+                    ui.label("定位锚点纬度：");
+                    mobile::drag_f64(ui, "device_lat", &mut self.device_buf.anchor_lat, -90.0..=90.0, 0.00001, 6);
+                    ui.end_row();
+                    ui.label("定位锚点经度：");
+                    mobile::drag_f64(ui, "device_lon", &mut self.device_buf.anchor_lon, -180.0..=180.0, 0.00001, 6);
+                    ui.end_row();
+                });
+        }
 
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
+        mobile::row(ui, |ui| {
             if ui.add(theme::primary_btn("保存")).clicked() {
                 match crate::api::model::save_identity(&self.device_buf) {
                     Ok(()) => {

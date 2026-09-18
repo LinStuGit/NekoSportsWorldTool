@@ -1,6 +1,6 @@
 //! 数据模型与本地持久化。
 //!
-//! 所有持久化文件都在 exe 同目录：identity.json（设备身份，device_id 固定复用
+//! 持久化文件位于桌面 exe 目录或 Android 应用私有目录：identity.json（设备身份，device_id 固定复用
 //! ——严禁每次随机，会触发 10121 风控）、session.json（登录态）、config.json
 //! （账号/参数）、points_cache.json（点位缓存）。
 
@@ -100,13 +100,10 @@ impl Default for Config {
     }
 }
 
-// ── 持久化（exe 同目录）────────────────────────────────────────
+// ── 持久化（平台数据目录）──────────────────────────────────────
 
 fn exe_dir() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
+    crate::platform::data_dir()
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(name: &str) -> Option<T> {
@@ -177,6 +174,35 @@ pub fn load_config() -> Config {
 
 pub fn save_config(c: &Config) -> Result<(), String> {
     write_json("config.json", c)
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn session_roundtrip_and_logout_use_private_data_directory() {
+        let directory = std::env::temp_dir().join(format!("neko-storage-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = Some(directory.clone()));
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = None);
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory.clone());
+        assert_eq!(exe_dir(), directory, "storage must use the injected app directory");
+        let session = Session { uid: 123, token: "test-only-token".into(), ..Default::default() };
+        save_session(&session).unwrap();
+        assert!(directory.join("session.json").is_file());
+        assert_eq!(load_session().uid, 123);
+        assert_eq!(load_session().token, session.token);
+        clear_session();
+        assert!(!directory.join("session.json").exists());
+        assert_eq!(load_session().uid, 0);
+    }
 }
 
 /// 点位缓存：{ts_ms, points}，TTL 300s（服务端限流 10603：5 分钟 3 次）。

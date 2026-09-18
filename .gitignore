@@ -18,3 +18,9 @@ docs/_preview.png
 /obs_*.json
 /rec_all.tmp
 /msg.txt
+/.superpowers/
+/android/build/
+/android/.signing/
+/target-ui/
+/.android-test/
+/.worktrees/
