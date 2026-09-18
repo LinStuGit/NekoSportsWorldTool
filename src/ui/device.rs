@@ -96,6 +96,10 @@ impl App {
                 mobile::text_edit(ui, "device_os", &mut self.device_buf.os_version, crate::platform::InputKind::Text, ui.available_width());
                 ui.label(name_label);
                 mobile::text_edit(ui, "device_name", &mut self.device_buf.device_name, crate::platform::InputKind::Text, ui.available_width());
+                if !is_ios {
+                    ui.label("品牌（本地展示，可空）：");
+                    mobile::text_edit(ui, "device_manufacturer", &mut self.device_buf.manufacturer, crate::platform::InputKind::Text, ui.available_width());
+                }
                 ui.label("城市：");
                 mobile::text_edit(ui, "device_city", &mut self.device_buf.city, crate::platform::InputKind::Text, ui.available_width());
                 ui.label("定位锚点纬度：");
@@ -120,6 +124,11 @@ impl App {
                     ui.label(name_label);
                     mobile::text_edit(ui, "device_name", &mut self.device_buf.device_name, crate::platform::InputKind::Text, 200.0);
                     ui.end_row();
+                    if !is_ios {
+                        ui.label("品牌（本地展示，可空）：");
+                        mobile::text_edit(ui, "device_manufacturer", &mut self.device_buf.manufacturer, crate::platform::InputKind::Text, 200.0);
+                        ui.end_row();
+                    }
                     ui.label("城市：");
                     mobile::text_edit(ui, "device_city", &mut self.device_buf.city, crate::platform::InputKind::Text, 120.0);
                     ui.end_row();
@@ -176,11 +185,15 @@ impl App {
         if page.saved_flash > 0.0 {
             page.saved_flash -= ui.ctx().input(|i| i.stable_dt);
         }
+        if self.identity.platform == "android" && !self.identity.manufacturer.is_empty() {
+            ui.label(format!("当前保存品牌：{}", self.identity.manufacturer));
+        }
     }
 }
 
 /// 整套随机：uuid v4 设备 ID（大写）；机型/系统按平台池抽取。
 fn randomize(buf: &mut HeaderIdentity, platform: &str) {
+    buf.manufacturer.clear();
     buf.device_id = uuid::Uuid::new_v4().to_string().to_uppercase();
     buf.app_install_time = HeaderIdentity::fresh_install_time(platform);
     if platform == "android" {
@@ -198,5 +211,22 @@ fn randomize(buf: &mut HeaderIdentity, platform: &str) {
         buf.os_version = IOS_OS_POOL[k].into();
         buf.idfa = uuid::Uuid::new_v4().to_string().to_uppercase();
         buf.platform = "ios".into();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn random_device_does_not_keep_a_previously_imported_brand() {
+        for platform in ["android", "ios"] {
+            let mut identity = HeaderIdentity {
+                manufacturer: "Previously imported brand".into(),
+                ..Default::default()
+            };
+            randomize(&mut identity, platform);
+            assert!(identity.manufacturer.is_empty(), "random {platform} identity must not retain a different device's brand");
+        }
     }
 }

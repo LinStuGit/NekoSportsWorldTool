@@ -17,8 +17,13 @@ import org.nekosportsworld.tool.MainActivity;
 public final class SmokeInstrumentation extends Instrumentation {
     private Throwable failure;
     private int passed;
+    private boolean verifyStoredBrand;
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+    @Override public void onCreate(Bundle arguments) {
+        super.onCreate(arguments);
+        verifyStoredBrand = arguments != null && "true".equals(arguments.getString("verifyStoredBrand"));
+        start();
+    }
 
     private void check(boolean condition, String message) {
         if (!condition) throw new AssertionError(message);
@@ -49,7 +54,7 @@ public final class SmokeInstrumentation extends Instrumentation {
         } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
     }
 
-    private org.json.JSONObject readIdentity(MainActivity activity) {
+    private org.json.JSONObject readIdentity(android.content.Context activity) {
         try {
             return new org.json.JSONObject(new String(java.nio.file.Files.readAllBytes(
                 new java.io.File(activity.getFilesDir(), "identity.json").toPath()),
@@ -76,6 +81,22 @@ public final class SmokeInstrumentation extends Instrumentation {
     @Override public void onStart() {
         Bundle report = new Bundle();
         try {
+            if (verifyStoredBrand) {
+                // A second instrumentation invocation starts a fresh app process.
+                org.json.JSONObject before = readIdentity(getTargetContext());
+                check(android.os.Build.MANUFACTURER.equals(before.getString("manufacturer")), "previous process persisted the real brand");
+                Intent restart = new Intent().setClassName("org.nekosportsworld.tool", "org.nekosportsworld.tool.MainActivity");
+                restart.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                MainActivity restarted = (MainActivity) startActivitySync(restart);
+                awaitUi(restarted::hasWindowFocus, "fresh process window focus");
+                check(dialog(restarted, "deviceInfoDialog") == null, "fresh process must retain the consent choice");
+                org.json.JSONObject after = readIdentity(restarted);
+                check(before.toString().equals(after.toString()), "process restart must retain the complete saved identity");
+                check(android.os.Build.MANUFACTURER.equals(after.getString("manufacturer")), "brand retained across process restart");
+                report.putString("stream", "PASS: " + passed + " Android persistence restart checks\n");
+                finish(Activity.RESULT_OK, report);
+                return;
+            }
             // The runner only targets an explicitly named emulator. Reset this fixture
             // so denial, first-run consent and UUID reuse are exercised on every run.
             getTargetContext().getSharedPreferences("device_info", 0).edit().clear().commit();
@@ -93,6 +114,7 @@ public final class SmokeInstrumentation extends Instrumentation {
             check(java.util.UUID.fromString(originalUuid) != null, "DeviceId remains an application UUID");
             awaitUi(() -> dialog(activity, "deviceInfoDialog") != null, "first-run device information consent");
             check("Android".equals(initialIdentity.getString("device_name")), "real model must not be read into identity before consent");
+            check(initialIdentity.optString("manufacturer").isEmpty(), "brand must stay empty before consent");
             onUi(() -> dialog(activity, "deviceInfoDialog").getButton(AlertDialog.BUTTON_NEGATIVE).performClick());
             awaitUi(() -> dialog(activity, "deviceInfoDialog") == null, "device information denial");
             check(readIdentity(activity).toString().equals(initialIdentity.toString()), "denial must leave identity unchanged");
@@ -112,6 +134,7 @@ public final class SmokeInstrumentation extends Instrumentation {
             });
             awaitUi(() -> identityHas(activity, "device_name", android.os.Build.MODEL), "accepted device information saved through Rust JNI bridge");
             org.json.JSONObject accepted = readIdentity(activity);
+            check(android.os.Build.MANUFACTURER.equals(accepted.getString("manufacturer")), "real brand must be persisted after consent");
             check(android.os.Build.VERSION.RELEASE.equals(accepted.getString("os_version")), "real Android version imported");
             check(originalUuid.equals(accepted.getString("device_id")), "consenting must preserve the original UUID");
             for (String field : new String[]{"idfa", "mac_address", "app_install_time", "city", "anchor_lat", "anchor_lon"}) {
@@ -179,6 +202,7 @@ public final class SmokeInstrumentation extends Instrumentation {
             MainActivity reopened = (MainActivity) startActivitySync(launch);
             awaitUi(reopened::hasWindowFocus, "reopened activity window focus");
             check(originalUuid.equals(readIdentity(reopened).getString("device_id")), "reopening must reuse UUID");
+            check(android.os.Build.MANUFACTURER.equals(readIdentity(reopened).getString("manufacturer")), "reopening must retain the saved brand");
             onUi(() -> {
                 check(dialog(reopened, "deviceInfoDialog") == null, "consent must not repeat after reopening");
                 check(reopened != activity, "a new Activity can start in the same process");
@@ -193,6 +217,7 @@ public final class SmokeInstrumentation extends Instrumentation {
             removeMonitor(monitor);
             check(recreated != null && recreated != reopened, "Activity recreation completes");
             awaitUi(recreated::hasWindowFocus, "recreated activity window focus");
+            check(android.os.Build.MANUFACTURER.equals(readIdentity(recreated).getString("manufacturer")), "Activity recreation must retain the saved brand");
             onUi(() -> {
                 recreated.openEditor(905, "recreated", 0);
                 check(editor(recreated) != null, "editor usable after Activity recreation");
@@ -220,6 +245,7 @@ public final class SmokeInstrumentation extends Instrumentation {
             awaitUi(() -> identityHas(recovered, "device_name", android.os.Build.MODEL), "recovered import persistence");
             check(android.os.Build.MODEL.equals(readIdentity(recovered).getString("device_name")), "immediate exit must not permanently lose accepted information");
             check(originalUuid.equals(readIdentity(recovered).getString("device_id")), "consent recovery must preserve UUID");
+            check(android.os.Build.MANUFACTURER.equals(readIdentity(recovered).getString("manufacturer")), "consent recovery must preserve brand");
             awaitUi(() -> recovered.getSharedPreferences("device_info", 0).getBoolean("asked", false), "persisted consent acknowledgement");
             check(true, "consent completion is recorded after identity persistence");
             report.putString("stream", "PASS: " + passed + " Android integration checks\n");

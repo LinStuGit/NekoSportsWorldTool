@@ -35,6 +35,7 @@ public final class MainActivity extends NativeActivity {
             AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("读取本机信息")
                 .setMessage("是否允许读取本机品牌、型号和 Android 系统版本？\n\n" + purpose
+                    + "品牌仅用于设备页展示。"
                     + "\n\n设备 UUID 继续沿用本应用首次生成并保存的值，不会更换。拒绝后仍可手动填写，也可在设备页再次读取。")
                 .setPositiveButton("允许读取", (ignored, which) -> {
                     // First-run completion is acknowledged only after Rust saves it.

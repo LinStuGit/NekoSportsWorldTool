@@ -172,6 +172,7 @@ pub fn identity_with_device_info(identity: &HeaderIdentity, info: &DeviceInfo) -
     let mut updated = identity.clone();
     updated.platform = "android".into();
     updated.device_name = info.model.trim().into();
+    updated.manufacturer = info.manufacturer.trim().into();
     updated.os_version = info.os_version.trim().into();
     Ok(updated)
 }
@@ -214,7 +215,7 @@ mod storage_tests {
     use super::*;
 
     #[test]
-    fn android_identity_defaults_and_device_import_preserve_persisted_uuid() {
+    fn android_identity_import_persists_brand_and_reuses_uuid() {
         let directory = std::env::temp_dir().join(format!("neko-identity-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&directory).unwrap();
         crate::platform::TEST_DATA_DIR.with(|p| *p.borrow_mut() = Some(directory.clone()));
@@ -237,7 +238,9 @@ mod storage_tests {
         existing.platform = "ios".into();
         existing.device_name = "Existing manual name".into();
         existing.idfa = "manual-value".into();
-        save_identity(&existing).unwrap();
+        let mut legacy = serde_json::to_value(&existing).unwrap();
+        legacy.as_object_mut().unwrap().remove("manufacturer");
+        write_json("identity.json", &legacy).unwrap();
         let loaded = load_identity_for_platform("android");
         assert_eq!(serde_json::to_value(&loaded).unwrap(), serde_json::to_value(&existing).unwrap(),
             "opening an existing install must not overwrite a manual identity");
@@ -253,12 +256,26 @@ mod storage_tests {
         let mut expected = serde_json::to_value(&existing).unwrap();
         expected["platform"] = "android".into();
         expected["device_name"] = "Phone 16".into();
+        expected["manufacturer"] = "Example".into();
         expected["os_version"] = "16".into();
         assert_eq!(serde_json::to_value(&imported).unwrap(), expected,
             "import must preserve UUID, MAC, manual IMEI/IDFA, install time and location");
         assert_eq!(load_identity().device_name, existing.device_name, "preview must not save implicitly");
         save_identity(&imported).unwrap();
-        assert_eq!(load_identity().device_id, first.device_id);
+        let stored: serde_json::Value = read_json("identity.json").unwrap();
+        assert_eq!(stored.get("manufacturer").and_then(|value| value.as_str()), Some("Example"),
+            "the consented brand must be written to identity.json");
+        let reloaded = load_identity();
+        assert_eq!(serde_json::to_value(&reloaded).unwrap(), serde_json::to_value(&imported).unwrap(),
+            "brand and identity must survive a fresh load from disk");
+        assert_eq!(reloaded.device_id, first.device_id);
+        let (header, _) = crate::crypto::header::build_header_for(&reloaded, 0, "", Some(1_700_000_000_000));
+        let header: serde_json::Value = serde_json::from_str(&header).unwrap();
+        assert_eq!(header["DeviceId"], first.device_id);
+        assert_eq!(header["deviceName"], "Phone 16", "brand must not be prepended to the protocol model field");
+        assert_eq!(header["osVersion"], "16");
+        assert!(header.get("manufacturer").is_none() && header.get("brand").is_none(),
+            "persisting local brand metadata must not invent new protocol fields");
     }
 
     #[test]
