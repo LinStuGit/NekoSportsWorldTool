@@ -1,6 +1,6 @@
 # Android APK
 
-Android 移植保留 Rust 业务逻辑、桌面 GUI/CLI 与七个功能页面。手机端沿用原界面配色，增加竖屏排版、触控数值输入和内置中文字体。
+Android 移植保留 Rust 业务逻辑、桌面 GUI/CLI 与七个功能页面。手机端沿用原界面配色，增加竖屏排版、触控数值输入和内置中文字体；支持应用内自更新（关于页检查，下载 APK 后调起系统安装器）。
 
 ## 使用方式
 
@@ -12,6 +12,18 @@ Android 移植保留 Rust 业务逻辑、桌面 GUI/CLI 与七个功能页面。
 - DeviceId 沿用原项目首次生成并持久化的 UUID；读取本机信息不更换 UUID，也不改动手填 IMEI、MAC、安装时间或位置。读取不会申请电话权限。
 - 登录、跑步与 AI 任务执行时保持屏幕常亮；任务结束或切到后台后解除。使用期间请让 App 保持前台，后台或锁屏运行不作保证。
 - 数据保存在 Android 应用私有 `files` 目录；卸载/清除应用数据会删除它们。APK 不带电脑端的账号、会话和配置。
+- 自更新：默认启动静默检查（可在关于页改为询问/关闭），发现新版本下载 APK 后调起系统安装器；首次安装需在系统设置允许本应用"安装未知应用"。检查上游与 fork 两个仓库，取带 APK 资产且版本最新的 Release。
+
+## 发布（自更新下载源）
+
+推 APK 到 GitHub Release 用 `android/release.ps1`（需要 gh CLI 已登录）：
+
+```powershell
+./android/release.ps1 -AndroidRev 4                       # 发到 fork（默认）
+./android/release.ps1 -AndroidRev 5 -Repo YanamiNeko/NekoSportsWorldTool -Notes "..."
+```
+
+脚本会读 Cargo.toml 版本、盖章 AndroidManifest（versionName=`<版本>-android.<N>`）、构建 arm64 并以固定资产名 `NekoSportsWorldTool-android-arm64.apk` 上传。**必须一直用同一个签名密钥**（`android/.signing/local-test.keystore`）：签名变化后手机无法覆盖安装，卸载重装还会丢 identity/session。
 
 ## Windows 构建
 

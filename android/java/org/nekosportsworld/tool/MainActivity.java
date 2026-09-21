@@ -175,6 +175,38 @@ public final class MainActivity extends NativeActivity {
         });
     }
 
+    /** 自更新：把私有目录里已下载的 update.apk 交给系统安装器。 */
+    public void installApk(String path) {
+        runOnUiThread(() -> {
+            try {
+                if (path == null || !new java.io.File(path).isFile()) {
+                    android.widget.Toast.makeText(this,
+                        "安装包不存在，请重新检查更新",
+                        android.widget.Toast.LENGTH_LONG).show();
+                    return;
+                }
+                android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                intent.setDataAndType(ApkProvider.uriForUpdate(), "application/vnd.android.package-archive");
+                startActivity(intent);
+            } catch (Exception error) {
+                android.widget.Toast.makeText(this,
+                    "无法启动安装器，请到系统设置允许本应用安装未知应用后重试",
+                    android.widget.Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    /** 当前 APK 的 versionName（与 Release tag 对齐，供更新检查比较）。 */
+    public String appVersionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception error) {
+            return "";
+        }
+    }
+
     private void updateScreenPolicy() {
         if (taskActive && resumed) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

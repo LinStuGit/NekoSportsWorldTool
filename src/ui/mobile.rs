@@ -75,7 +75,7 @@ fn parse_f64_in_range(
 }
 
 pub fn tab_bar(ui: &mut egui::Ui, selected: &mut usize) -> Vec<egui::Response> {
-    const TABS: [&str; 7] = ["跑步", "AI运动", "运动记录", "数据", "我的", "设备信息", "运行日志"];
+    const TABS: [&str; 8] = ["跑步", "AI运动", "运动记录", "数据", "我的", "设备信息", "运行日志", "关于"];
     let compact = compact_ui(ui);
     let mut responses = Vec::with_capacity(TABS.len());
     if compact {
@@ -379,7 +379,7 @@ mod tests {
                 });
             });
 
-            assert_eq!(rects.len(), 7, "width={width}");
+            assert_eq!(rects.len(), 8, "width={width}");
             assert!(rects.iter().all(|rect| rect.is_finite() && rect.width() > 0.0));
             assert!(rects.iter().all(|rect| rect.max.x <= width + 0.5), "width={width}: {rects:?}");
             if is_compact(width) {

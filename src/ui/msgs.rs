@@ -1,6 +1,7 @@
 //! 消息协议分发与弹窗构建。
 
-use super::{App, AI_DETAIL, AI_DONE, AI_LIST, AI_RECORDS, CHEAT, IP, LOGIN_DONE, PopupInfo, RANK, RECORDS, RUN_DETAIL, RUN_DONE, SEMESTER, USER};
+use super::{App, AI_DETAIL, AI_DONE, AI_LIST, AI_RECORDS, CHEAT, IP, LOGIN_DONE, PopupInfo, RANK, RECORDS, RUN_DETAIL, RUN_DONE, SEMESTER, UPDATE_CHK, UPDATE_DONE, UPDATE_PROG, USER};
+use super::about::FinishAction;
 use crate::api::model;
 use chrono::TimeZone;
 
@@ -19,6 +20,9 @@ impl App {
         let mut ai_records_json = None;
         let mut ai_detail_raw = None;
         let mut detail_raw = None;
+        let mut update_chk = None;
+        let mut update_prog = None;
+        let mut update_done = None;
         while let Ok(msg) = self.rx.try_recv() {
             if let Some(v) = msg.strip_prefix(IP) {
                 done_ip = Some(v.to_string());
@@ -54,6 +58,12 @@ impl App {
                 if let Ok(raw) = serde_json::from_str::<serde_json::Value>(v) {
                     ai_detail_raw = Some(raw);
                 }
+            } else if let Some(v) = msg.strip_prefix(UPDATE_CHK) {
+                update_chk = Some(v.to_string());
+            } else if let Some(v) = msg.strip_prefix(UPDATE_PROG) {
+                update_prog = Some(v.to_string());
+            } else if let Some(v) = msg.strip_prefix(UPDATE_DONE) {
+                update_done = Some(v.to_string());
             } else {
                 self.log.push(&msg);
             }
@@ -202,6 +212,62 @@ impl App {
         if let Some(raw) = detail_raw {
             self.records_page.detail_raw = Some(raw);
             self.records_page.detail_loading = false;
+        }
+        if let Some(v) = update_chk {
+            self.update.checking = false;
+            let val: serde_json::Value = serde_json::from_str(&v).unwrap_or_default();
+            if val.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) {
+                if val.get("newer").and_then(|b| b.as_bool()).unwrap_or(false) {
+                    if let Ok(rel) =
+                        serde_json::from_value::<crate::update::ReleaseInfo>(
+                            val.get("release").cloned().unwrap_or(serde_json::Value::Null),
+                        )
+                    {
+                        self.status = format!("发现新版本 {}", rel.tag);
+                        self.update.latest = Some(rel.clone());
+                        self.update.up_to_date = false;
+                        self.update.confirm = Some(rel);
+                    }
+                } else {
+                    self.update.up_to_date = true;
+                    self.status = "已是最新版本".into();
+                }
+            } else {
+                let msg = val.get("message").and_then(|m| m.as_str()).unwrap_or("未知错误");
+                self.update.check_error = Some(msg.to_string());
+                self.status = format!("检查更新失败：{msg}");
+            }
+        }
+        if let Some(v) = update_prog {
+            if let Some((done, total)) = v.split_once('/') {
+                self.update.done = done.parse().unwrap_or(0);
+                let t: u64 = total.parse().unwrap_or(0);
+                self.update.total = (t > 0).then_some(t);
+            }
+        }
+        if let Some(v) = update_done {
+            self.update.downloading = false;
+            let val: serde_json::Value = serde_json::from_str(&v).unwrap_or_default();
+            let tag = val.get("tag").and_then(|t| t.as_str()).unwrap_or("").to_string();
+            if val.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) {
+                self.status = format!("√ 已更新到 {tag}");
+                #[cfg(target_os = "android")]
+                {
+                    self.update.finish = Some(FinishAction::InstallApk { tag });
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    self.update.finish = Some(FinishAction::Restart { tag });
+                }
+            } else {
+                let msg = val.get("message").and_then(|m| m.as_str()).unwrap_or("未知错误");
+                self.update.check_error = Some(msg.to_string());
+                self.status = format!("× 更新失败：{msg}");
+                self.popup = Some(PopupInfo {
+                    title: "更新失败".into(),
+                    lines: vec![msg.to_string()],
+                });
+            }
         }
         if got_semester || got_cheat || got_rank {
             self.data_busy = false;
