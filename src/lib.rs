@@ -4,8 +4,10 @@ mod api;
 pub mod cli;
 mod crypto;
 pub mod platform;
+mod relaunch;
 mod textlog;
 mod track;
+mod update;
 
 #[cfg(feature = "gui")]
 mod ui;
