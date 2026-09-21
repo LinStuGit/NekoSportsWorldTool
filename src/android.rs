@@ -146,6 +146,53 @@ pub(crate) fn copy_text(text: &str) {
     });
 }
 
+/// with_activity 的带返回值版本（读 Java 方法结果用）。
+fn with_activity_value<T>(
+    action: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> jni::errors::Result<T>,
+) -> Option<T> {
+    let app = APP.lock().unwrap().clone();
+    let app = app?;
+    let result = (|| {
+        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+        let mut env = vm.attach_current_thread()?;
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+        let result = env.with_local_frame(16, |env| action(env, &activity));
+        if env.exception_check().unwrap_or(false) {
+            let _ = env.exception_describe();
+            let _ = env.exception_clear();
+        }
+        result
+    })();
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            log::error!("Android value bridge: {error}");
+            None
+        }
+    }
+}
+
+/// 当前 APK 的 versionName（形如 0.2.5-android.3，更新比较用）。
+pub(crate) fn version_name() -> String {
+    with_activity_value(|env, activity| {
+        let value = env.call_method(activity, "appVersionName", "()Ljava/lang/String;", &[])?;
+        let object = value.l()?;
+        let string: JString = object.into();
+        let text: String = env.get_string(&string)?.into();
+        Ok(text)
+    })
+    .unwrap_or_default()
+}
+
+/// 自更新：把已下载的 APK 交给系统安装器（用户在系统弹窗确认）。
+pub(crate) fn install_apk(path: &str) {
+    with_activity(|env, activity| {
+        let value = env.new_string(path)?;
+        env.call_method(activity, "installApk", "(Ljava/lang/String;)V", &[JValue::Object(value.as_ref())])?;
+        Ok(())
+    });
+}
+
 pub(crate) fn set_keep_screen_on(enabled: bool) {
     if SCREEN_ON.load(Ordering::Relaxed) == enabled { return; }
     if with_activity(|env, activity| {

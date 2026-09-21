@@ -35,6 +35,7 @@ fn usage() {
   rank   indoor --range 1|2|3 [--gender 0|1]
                                            室内榜（1日 2周 3月）
   rank   history --sort 1|2 [--gender 0|1] 历史榜
+  update [--check]                        检查更新；默认下载并自替换（--check 仅检查）
 
 当天榜单通常在有效里程产生后才有数据；run 默认随机 1.0~1.5 km / 6~8 分配速 / 30-300 分钟前。"#
     );

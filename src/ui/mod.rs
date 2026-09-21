@@ -7,6 +7,7 @@
 //! __IP_DONE__ / __LOGIN_DONE__ / __RUN_DONE__ / __AI_DONE__ / __RECORDS__ / __AI_LIST__
 //! __SEMESTER__ / __CHEAT__ / __RANK__ / __USER__ / __AI_RECORDS__
 
+pub mod about;
 pub mod ai;
 pub mod data;
 pub mod device;
@@ -37,6 +38,9 @@ pub const RANK: &str = "__RANK__";
 pub const USER: &str = "__USER__";
 pub const AI_RECORDS: &str = "__AI_RECORDS__";
 pub const RUN_DETAIL: &str = "__RUN_DETAIL__";
+pub const UPDATE_CHK: &str = "__UPDATE_CHK__";
+pub const UPDATE_PROG: &str = "__UPDATE_PROG__";
+pub const UPDATE_DONE: &str = "__UPDATE_DONE__";
 
 /// 提交结果弹窗。
 pub struct PopupInfo {
@@ -77,6 +81,7 @@ pub struct App {
     pub data_page: data::DataPage,
     pub user_page: user::UserPage,
     pub device_page: device::DevicePage,
+    pub update: about::UpdateUi,
 }
 
 impl eframe::App for App {
@@ -223,6 +228,23 @@ impl eframe::App for App {
                         "https://github.com/YanamiNeko",
                     );
                     ui.label(egui::RichText::new("Powered by").color(theme::text_dim()));
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            !(self.update.checking || self.update.downloading),
+                            egui::Button::new(
+                                egui::RichText::new("检查更新").small().color(theme::text_dim()),
+                            ),
+                        )
+                        .clicked()
+                    {
+                        self.check_update(true);
+                    }
+                    ui.label(
+                        egui::RichText::new(format!("v{}", crate::platform::version_name()))
+                            .small()
+                            .color(theme::text_dim()),
+                    );
                 });
             });
             ui.add_space(2.0);
@@ -239,7 +261,8 @@ impl eframe::App for App {
                 3 => self.draw_data(ui),
                 4 => self.draw_user(ui),
                 5 => self.draw_device(ui),
-                _ => self.log.render(ui),
+                6 => self.log.render(ui),
+                _ => self.draw_about(ui),
             }
         });
 
@@ -266,6 +289,7 @@ impl eframe::App for App {
                 self.popup = None;
             }
         }
+        self.draw_update_windows(ctx);
         crate::platform::sync_clipboard(ctx);
     }
 }
@@ -323,9 +347,18 @@ impl App {
             data_page: data::DataPage::default(),
             user_page: user::UserPage::default(),
             device_page: device::DevicePage::default(),
+            update: about::UpdateUi::default(),
         };
         if app.font_loaded.is_none() {
             app.log.push("未找到中文字体（msyh/simhei/simsun），界面中文可能显示为方块");
+        }
+        // 上次更新残留的 .old/.new 顺手清掉
+        crate::update::cleanup_residue();
+        // 启动检查更新（silent 静默 / ask 询问 / off 关闭）
+        match app.config.update_check.as_str() {
+            "off" => {}
+            "ask" => app.update.ask_startup = true,
+            _ => app.check_update(false),
         }
         app.fetch_ip();
         #[cfg(target_os = "android")]

@@ -16,6 +16,7 @@
 - **AI 运动**：任务 / 自由练习双模式，批量补签（前 60 天 × 多项目）
 - **数据**：学期完成度、违规自查、排行榜（个人/班级/院系 × 日/月、室内榜、历史榜）、个人主页
 - **登录**：支持人机验证自动通过
+- **自动更新**：桌面端检查/下载/自替换并重启（GitHub Release 直连，无镜像）；Android 下载 APK 调起系统安装器；启动检查模式可选（静默/询问/关闭）
 
 ## 界面
 
@@ -38,6 +39,7 @@ NekoSportsWorldTool login --user <手机号> --pass <密码> --remember
 NekoSportsWorldTool run                                  # 一键跑步
 NekoSportsWorldTool ai --sport 2 --score 26000           # AI 运动
 NekoSportsWorldTool rank main --type 1 --sort 1          # 排行榜
+NekoSportsWorldTool update [--check]           # 自动更新（--check 仅检查不下载）
 NekoSportsWorldTool help                                 # 全部命令
 ```
 
@@ -49,6 +51,7 @@ NekoSportsWorldTool help                                 # 全部命令
 - **10121 设备风险**：设备身份是持久化的，删除 `identity.json` 等于换了新设备，不要频繁删
 - **10603 点位限流**：点位接口 5 分钟限 3 次，程序内置 300s 缓存，正常使用不会触发
 - **榜单为空**：当天还没有人产生有效里程，查询会自动回退最近 3 天
+- **检查更新失败**：更新仅直连 GitHub，网络不通时到 [Release](https://github.com/YanamiNeko/NekoSportsWorldTool/releases) 手动下载
 - **人机验证失败**：自动重试 3 轮，仍失败大概率是网络波动，稍后再试
 - **杀软误报**：未签名编译产物可能被误报，自行判断后加白
 

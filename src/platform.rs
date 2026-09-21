@@ -47,6 +47,23 @@ pub fn set_keep_screen_on(enabled: bool) {
     let _ = enabled;
 }
 
+/// 当前程序版本：桌面读 Cargo 版本，Android 读 manifest versionName
+/// （形如 0.2.5-android.3，与 Release tag 对齐）。
+pub fn version_name() -> String {
+    #[cfg(target_os = "android")]
+    { crate::android::version_name() }
+    #[cfg(not(target_os = "android"))]
+    { env!("CARGO_PKG_VERSION").to_string() }
+}
+
+/// Android：把已下载的 APK 交给系统安装器（用户在系统弹窗确认安装）。
+pub fn install_apk(path: &str) {
+    #[cfg(target_os = "android")]
+    crate::android::install_apk(path);
+    #[cfg(not(target_os = "android"))]
+    let _ = path;
+}
+
 #[cfg(feature = "gui")]
 pub fn sync_clipboard(context: &egui::Context) {
     #[cfg(target_os = "android")]

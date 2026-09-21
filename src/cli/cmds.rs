@@ -24,6 +24,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "semester" => cmd_semester(),
         "cheat" => cmd_cheat(&rest),
         "rank" => cmd_rank(&rest),
+        "update" => cmd_update(&rest),
         "help" | "--help" | "-h" => {
             usage();
             0
@@ -579,6 +580,82 @@ fn cmd_rank(rest: &[&str]) -> i32 {
         Err(e) => {
             eprintln!("查询失败: {e}");
             1
+        }
+    }
+}
+
+fn cmd_update(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let check_only = get(&flags, "check").is_some();
+    crate::update::cleanup_residue();
+    let mut log = logger();
+    let release = match crate::update::check_latest(&mut log) {
+        Ok(r) => r,
+        Err(e) => {
+            println!("× 检查更新失败: {e}");
+            return 1;
+        }
+    };
+    let Some(rel) = release else {
+        println!("√ 已是最新版本（v{}）", crate::update::current_version());
+        return 0;
+    };
+    println!(
+        "发现新版本 {}（当前 v{}，{:.1} MB）",
+        rel.tag,
+        crate::update::current_version(),
+        rel.asset_size as f64 / 1024.0 / 1024.0
+    );
+    if !rel.notes.is_empty() {
+        for line in rel.notes.lines().take(8) {
+            println!("  {line}");
+        }
+    }
+    if check_only {
+        println!("仅检查（--check），未下载。下载地址：{}", rel.asset_url);
+        return 0;
+    }
+    #[cfg(target_os = "android")]
+    {
+        println!("Android 版请在界面（关于页）中下载并安装更新");
+        0
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        println!("开始下载 {}…", rel.asset_name);
+        let mut last_pct = u64::MAX;
+        let bytes = match crate::update::download(&rel.asset_url, |done, total| {
+            if let Some(t) = total.filter(|t| *t > 0) {
+                let pct = done * 100 / t;
+                if pct != last_pct && pct % 5 == 0 {
+                    println!("  {pct}%");
+                    last_pct = pct;
+                }
+            }
+        }) {
+            Ok(b) => b,
+            Err(e) => {
+                println!("× 下载失败: {e}");
+                return 1;
+            }
+        };
+        println!("下载完成（{} 字节），解包替换…", bytes.len());
+        let bin = match crate::update::extract(&rel.asset_name, &bytes) {
+            Ok(b) => b,
+            Err(e) => {
+                println!("× {e}");
+                return 1;
+            }
+        };
+        match crate::update::apply(&bin) {
+            Ok(()) => {
+                println!("√ 已更新到 {}，请重新运行命令", rel.tag);
+                0
+            }
+            Err(e) => {
+                println!("× 替换失败: {e}");
+                1
+            }
         }
     }
 }

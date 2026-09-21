@@ -65,6 +65,9 @@ pub struct Config {
     pub ai_minutes: i64,
     #[serde(default = "default_ai_reps")]
     pub ai_reps: i64,
+    /// 启动时检查更新：silent（静默，发现新版才弹窗）/ ask（每次询问）/ off
+    #[serde(default = "default_update_check")]
+    pub update_check: String,
 }
 
 fn default_f32() -> f32 {
@@ -82,6 +85,9 @@ fn default_ai_minutes() -> i64 {
 fn default_ai_reps() -> i64 {
     5
 }
+fn default_update_check() -> String {
+    "silent".into()
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -96,6 +102,7 @@ impl Default for Config {
             face_check: true,
             ai_minutes: default_ai_minutes(),
             ai_reps: default_ai_reps(),
+            update_check: default_update_check(),
         }
     }
 }

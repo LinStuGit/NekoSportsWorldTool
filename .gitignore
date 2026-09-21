@@ -28,3 +28,11 @@ docs/_preview.png
 /target-ui/
 /.android-test/
 /.worktrees/
+
+# 本地工具目录
+/.mimosa/
+/.zcode/
+
+# 自动更新替换残留
+*.exe.old
+*.exe.new

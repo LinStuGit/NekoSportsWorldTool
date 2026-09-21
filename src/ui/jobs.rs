@@ -1,9 +1,80 @@
 //! 后台任务与消息处理：IP 获取 / 登录 / 刷新 / 消息协议分发。
 
-use super::{App, AI_DETAIL, AI_RECORDS, AI_LIST, CHEAT, IP, LOGIN_DONE, RANK, RECORDS, RUN_DETAIL, SEMESTER, USER};
+use super::{App, AI_DETAIL, AI_RECORDS, AI_LIST, CHEAT, IP, LOGIN_DONE, RANK, RECORDS, RUN_DETAIL, SEMESTER, UPDATE_CHK, UPDATE_DONE, UPDATE_PROG, USER};
 use crate::api::model;
+use crate::update::ReleaseInfo;
 
 impl App {
+    /// 任一后台任务进行中（更新前的打断保护）。
+    pub fn any_busy(&self) -> bool {
+        self.login_busy
+            || self.run_busy
+            || self.ai_busy
+            || self.records_busy
+            || self.data_busy
+            || self.user_busy
+    }
+
+    /// 检查更新；manual=true 时切到关于页并显示状态。
+    pub fn check_update(&mut self, manual: bool) {
+        if self.update.checking || self.update.downloading {
+            return;
+        }
+        self.update.checking = true;
+        self.update.check_error = None;
+        if manual {
+            self.tab = 7;
+            self.status = "正在检查更新…".into();
+        }
+        self.spawn_job(move |tx| {
+            let mut log = |s: &str| {
+                tx.send(s.to_string()).ok();
+            };
+            let payload = match crate::update::check_latest(&mut log) {
+                Ok(Some(rel)) => serde_json::json!({ "ok": true, "newer": true, "release": rel }),
+                Ok(None) => serde_json::json!({ "ok": true, "newer": false }),
+                Err(e) => serde_json::json!({ "ok": false, "message": e }),
+            };
+            tx.send(format!("{UPDATE_CHK}{payload}")).ok();
+        });
+    }
+
+    /// 下载并应用更新（桌面：解包替换 exe；Android：APK 落私有目录）。
+    pub fn start_update_download(&mut self, rel: ReleaseInfo) {
+        if self.update.downloading {
+            return;
+        }
+        self.update.downloading = true;
+        self.update.done = 0;
+        self.update.total = None;
+        self.status = format!("正在下载 {}…", rel.tag);
+        self.spawn_job(move |tx| {
+            let outcome: Result<serde_json::Value, String> = (|| {
+                let mut report = |done: u64, total: Option<u64>| {
+                    tx.send(format!("{UPDATE_PROG}{}/{}", done, total.unwrap_or(0))).ok();
+                };
+                let bytes = crate::update::download(&rel.asset_url, &mut report)?;
+                #[cfg(target_os = "android")]
+                {
+                    let path = crate::platform::data_dir().join(crate::update::APK_NAME);
+                    std::fs::write(&path, &bytes).map_err(|e| format!("保存安装包失败: {e}"))?;
+                    Ok(serde_json::json!({ "ok": true, "tag": rel.tag }))
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    let bin = crate::update::extract(&rel.asset_name, &bytes)?;
+                    crate::update::apply(&bin)?;
+                    Ok(serde_json::json!({ "ok": true, "tag": rel.tag }))
+                }
+            })();
+            let payload = match outcome {
+                Ok(v) => v,
+                Err(e) => serde_json::json!({ "ok": false, "message": e }),
+            };
+            tx.send(format!("{UPDATE_DONE}{payload}")).ok();
+        });
+    }
+
     pub(crate) fn fetch_ip(&mut self) {
         self.spawn_job(|tx| {
             let agent = crate::api::client::make_agent();
