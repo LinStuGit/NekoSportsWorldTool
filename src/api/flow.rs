@@ -9,6 +9,7 @@ use super::records::fetch_one_record;
 use super::submit::{submit_record, SubmitParams, SubmitResult};
 use crate::track::generator::build as gen_track;
 use crate::track::wire::{build_obs_object, five_point_wrapper, obs_keys};
+use crate::location::Coordinate;
 use serde_json::Value;
 
 #[derive(Clone, Copy)]
@@ -51,7 +52,10 @@ pub fn run_full_flow(
 
     // ② 实时点位（拒绝本地样本兜底）
     log("[points] 拉取实时点位…");
-    let anchor = (client.identity.anchor_lat, client.identity.anchor_lon);
+    if client.identity.has_unconfigured_default_location() {
+        return Err("请先在设备信息页填写本次跑步所在城市和定位锚点，不能使用大连默认配置".into());
+    }
+    let anchor: Coordinate = client.identity.anchor_coordinate()?;
     let pts = points::fetch_points(client, anchor, log)?;
     if pts.is_empty() {
         return Err("实时点位为空 —— 拒绝本地样本兜底".into());
@@ -95,7 +99,7 @@ pub fn run_full_flow(
     ));
     // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用
     let start_ms = params.start_ms + (rand::random::<i64>() % 5) * 1000;
-    let track = gen_track(params.dist, params.dur, params.seed, (0.0, 0.0), start_ms, &pts_bd);
+    let track = gen_track(params.dist, params.dur, params.seed, (anchor.latitude, anchor.longitude), start_ms, &pts_bd);
     log(&format!(
         "√ [track] {} 点 totalDis={:.0}m steps={} 起点={}",
         track.locations.len(),
@@ -121,6 +125,7 @@ pub fn run_full_flow(
         weight: if sess.weight > 0.0 { sess.weight } else { 68.0 },
         face_check: params.face_check,
         five_point_json: five,
+        address: client.identity.city.clone(),
     };
     let result = submit_record(client, &sp, log)?;
     sleep_secs(1);

@@ -357,7 +357,14 @@ fn cmd_obs_sample(rest: &[&str]) -> i32 {
         }
     };
     let mut log = |s: &str| eprintln!("{s}");
-    let pts = match crate::api::points::fetch_points(&mut client, (0.0, 0.0), &mut log) {
+    let anchor = match client.identity.anchor_coordinate() {
+        Ok(value) => value,
+        Err(e) => {
+            eprintln!("定位锚点无效: {e}");
+            return 1;
+        }
+    };
+    let pts = match crate::api::points::fetch_points(&mut client, anchor, &mut log) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("点位拉取失败: {e}");
@@ -366,7 +373,7 @@ fn cmd_obs_sample(rest: &[&str]) -> i32 {
     };
     let pts_bd = crate::api::points::points_bd(&pts);
     let start_ms = crate::crypto::envelope::now_ms() - dur * 1000;
-    let track = crate::track::generator::build(dist, dur, seed, (0.0, 0.0), start_ms, &pts_bd);
+    let track = crate::track::generator::build(dist, dur, seed, (anchor.latitude, anchor.longitude), start_ms, &pts_bd);
     let sess = client.login.clone().unwrap_or_default();
     let uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
     let obj = crate::track::wire::build_obs_object(&track, rrid, &uuid, sess.uid, &pts);

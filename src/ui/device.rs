@@ -182,6 +182,12 @@ impl App {
             self.identity.anchor_lat,
             self.identity.anchor_lon,
         ));
+        if self.identity.has_unconfigured_default_location() {
+            ui.colored_label(
+                theme::warn(),
+                "运行前请填写实际城市和定位锚点；默认大连配置不会用于提交",
+            );
+        }
         if page.saved_flash > 0.0 {
             page.saved_flash -= ui.ctx().input(|i| i.stable_dt);
         }

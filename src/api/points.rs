@@ -7,6 +7,7 @@ use super::client::ApiClient;
 use super::model;
 use crate::crypto::envelope::{build_envelope, OuterOrder};
 use crate::crypto::sign::md5_url_sign;
+use crate::location::Coordinate;
 use serde_json::{json, Value};
 
 pub const POINTS_PATH: &str = "/api/v560/get/1/distance/1";
@@ -19,7 +20,7 @@ fn six_digit(v: f64) -> String {
 /// 拉取实时点位（带缓存回退）。anchor=(lat,lng) 请求锚点。
 pub fn fetch_points(
     client: &mut ApiClient,
-    anchor: (f64, f64),
+    anchor: Coordinate,
     log: &mut dyn FnMut(&str),
 ) -> Result<Vec<Value>, String> {
     fetch_points_ext(client, anchor, None, log)
@@ -28,12 +29,13 @@ pub fn fetch_points(
 /// run_area_id：学校配置了区域时 App 会附带；未配置则不传（与 App 一致）。
 pub fn fetch_points_ext(
     client: &mut ApiClient,
-    anchor: (f64, f64),
+    anchor: Coordinate,
     run_area_id: Option<String>,
     log: &mut dyn FnMut(&str),
 ) -> Result<Vec<Value>, String> {
+    anchor.validate()?;
     // ① TTL 内命中缓存直接返回
-    if let Some((ts, pts)) = model::load_points_cache() {
+    if let Some((ts, pts)) = model::load_points_cache_for(anchor) {
         if !pts.is_empty()
             && crate::crypto::envelope::now_ms() - ts < model::POINTS_TTL_MS
         {
@@ -48,7 +50,8 @@ pub fn fetch_points_ext(
         .as_ref()
         .map(|s| s.unid.clone())
         .unwrap_or_else(|| "0".into());
-    let (lat, lon) = anchor;
+    let lat = anchor.latitude;
+    let lon = anchor.longitude;
     let url = format!("{}{}", model::HOST, POINTS_PATH);
 
     let start_ms = crate::crypto::envelope::now_ms();
@@ -73,7 +76,7 @@ pub fn fetch_points_ext(
 
     let out = client.envelope_request("POST", &url, &body, crate::crypto::header::UA_IOS, &[])?;
     let fallback = |log: &mut dyn FnMut(&str)| -> Result<Vec<Value>, String> {
-        if let Some((_ts, pts)) = model::load_points_cache() {
+        if let Some((_ts, pts)) = model::load_points_cache_for(anchor) {
             if !pts.is_empty() {
                 log("[points] 接口失败，回退最近一次接口结果缓存");
                 return Ok(pts);
@@ -91,7 +94,7 @@ pub fn fetch_points_ext(
         .cloned()
         .unwrap_or_default();
     if !pts.is_empty() {
-        let _ = model::save_points_cache(&pts);
+        let _ = model::save_points_cache(anchor, &pts);
         return Ok(pts);
     }
     let err = payload.get("error").and_then(|e| e.as_i64()).unwrap_or(0);
