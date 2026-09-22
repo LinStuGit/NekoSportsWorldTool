@@ -36,12 +36,16 @@
 
 ```text
 NekoSportsWorldTool login --user <手机号> --pass <密码> --remember
-NekoSportsWorldTool run                                  # 一键跑步
+NekoSportsWorldTool run                                  # 一键跑步（可加 --altitude 米覆盖轨迹海拔）
 NekoSportsWorldTool ai --sport 2 --score 26000           # AI 运动
 NekoSportsWorldTool rank main --type 1 --sort 1          # 排行榜
 NekoSportsWorldTool update [--check]           # 自动更新（--check 仅检查不下载）
+NekoSportsWorldTool template --file run.gpx   # 本地分析真实记录海拔（不会上传）
 NekoSportsWorldTool help                                 # 全部命令
 ```
+
+`template` 只读取用户手动选择的本地 GPX/JSON 文件，输出采样点、海拔范围、累计上升和累计下降，
+不会登录、访问服务器或把模板记录接入跑步上传流程。
 
 青龙定时任务：首次手工 `login --remember` 一次，之后定时挂 `run` 即可。
 

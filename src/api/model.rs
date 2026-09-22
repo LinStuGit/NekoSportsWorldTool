@@ -61,6 +61,9 @@ pub struct Config {
     pub pace_max: f32,
     #[serde(default)]
     pub face_check: bool,
+    /// 跑步时覆盖轨迹点 bdA；为空表示使用生成器的海拔曲线。
+    #[serde(default)]
+    pub manual_altitude: Option<f64>,
     #[serde(default = "default_ai_minutes")]
     pub ai_minutes: i64,
     #[serde(default = "default_ai_reps")]
@@ -100,6 +103,7 @@ impl Default for Config {
             pace_min: default_pace_min(),
             pace_max: default_pace_max(),
             face_check: true,
+            manual_altitude: None,
             ai_minutes: default_ai_minutes(),
             ai_reps: default_ai_reps(),
             update_check: default_update_check(),

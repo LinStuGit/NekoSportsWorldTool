@@ -132,6 +132,25 @@ pub fn validate_five_point_wrapper(wrapper: &str) -> Result<(), String> {
 mod validation_tests {
     use super::*;
     #[test] fn rejects_empty_or_malformed_five_point_payload() { assert!(validate_five_point_wrapper("{}").is_err()); assert!(validate_five_point_wrapper(r#"{"fivePointJson":"[]"}"#).is_err()); }
+
+    #[test]
+    fn laps_are_rebuilt_from_overridden_altitude() {
+        let points = vec![(38.901678, 121.540241), (38.902564, 121.541233)];
+        let mut track = crate::track::generator::build(
+            1200.0,
+            600,
+            7,
+            (38.9, 121.54),
+            1_700_000_000_000,
+            &points,
+        );
+        crate::track::altitude::override_bd_a(&mut track, 36.75).unwrap();
+        let laps = build_laps(&track, track.startTime);
+        assert!(!laps.is_empty());
+        assert!(laps.iter().all(|lap| lap["elevationGain"] == 0.0));
+        assert!(laps.iter().all(|lap| lap["endAltAbs"] == 36.75));
+        assert!(laps.iter().all(|lap| lap["endAltRel"] == 0.0));
+    }
 }
 
 /// 10s 时间窗，id=(rrid%100000)*1000+窗口序秒（6 个真人样本跨 9 月记录验证一致；

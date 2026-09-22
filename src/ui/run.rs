@@ -61,6 +61,8 @@ pub struct RunPage {
     pub dist_max: f32,
     pub pace_min: f32,
     pub pace_max: f32,
+    /// 手动绝对海拔（米）；空白表示使用生成器默认海拔。
+    pub manual_altitude: String,
     /// 0=随机时刻 1=指定时刻
     pub start_mode: usize,
     pub days_ago: i64,
@@ -271,6 +273,17 @@ impl App {
                 });
             }
             mobile::row(ui, |ui| {
+                ui.label("手动海拔（米）：");
+                mobile::text_edit(
+                    ui,
+                    "run_manual_altitude",
+                    &mut page.manual_altitude,
+                    crate::platform::InputKind::Decimal,
+                    120.0,
+                );
+                ui.label("留空使用自动海拔");
+            });
+            mobile::row(ui, |ui| {
                 ui.label("开始时间：");
                 ui.radio_value(&mut page.start_mode, 0, "随机时刻");
                 ui.radio_value(&mut page.start_mode, 1, "指定时刻");
@@ -402,6 +415,16 @@ impl App {
             Some(p) => p,
             None => return,
         };
+        let manual_altitude = match page.manual_altitude.trim() {
+            "" => None,
+            text => match text.parse::<f64>() {
+                Ok(value) if value.is_finite() && (-500.0..=9000.0).contains(&value) => Some(value),
+                _ => {
+                    self.status = "手动海拔必须是 -500 到 9000 米之间的数字".into();
+                    return;
+                }
+            },
+        };
         let (dist, dur) = (plan.dist * 1000.0, plan.dur); // 米
         let start_ms = plan.start_ms;
         let face_check = if page.face_check { 1 } else { 0 };
@@ -410,6 +433,7 @@ impl App {
         self.config.pace_min = page.pace_min;
         self.config.pace_max = page.pace_max;
         self.config.face_check = page.face_check;
+        self.config.manual_altitude = manual_altitude;
         let _ = crate::api::model::save_config(&self.config);
 
         let identity = self.identity.clone();
@@ -426,7 +450,7 @@ impl App {
             let mut log = App::logger(tx.clone());
             let seed = (crate::crypto::envelope::now_ms() % 2_147_483_647) as u64;
             let mut client = crate::api::client::ApiClient::new(identity, Some(session));
-            let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check, seed };
+            let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check, manual_altitude, seed };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {
                     log(&format!(
@@ -464,6 +488,7 @@ mod tests {
             dist_max: 2.2,
             pace_min: 350.0,
             pace_max: 370.0,
+            manual_altitude: String::new(),
             start_mode,
             days_ago,
             hour: 12,

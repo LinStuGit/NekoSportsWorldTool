@@ -12,6 +12,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "login" => cmd_login(&rest),
         "logout" => cmd_logout(),
         "run" => cmd_run(&rest),
+        "template" => cmd_template(&rest),
         "ai" => cmd_ai(&rest),
         "ai-list" => cmd_ai_list(),
         "records" => cmd_records(),
@@ -94,6 +95,16 @@ fn cmd_run(rest: &[&str]) -> i32 {
     let days_ago: i64 = get(&flags, "days-ago").and_then(|v| v.parse().ok()).unwrap_or(0).clamp(0, 3);
     let time_spec = get(&flags, "time").unwrap_or("");
     let face = get(&flags, "face").map(|v| v == "1" || v == "true").unwrap_or(true);
+    let manual_altitude = match get(&flags, "altitude") {
+        Some(value) => match value.parse::<f64>() {
+            Ok(value) if value.is_finite() && (-500.0..=9000.0).contains(&value) => Some(value),
+            _ => {
+                eprintln!("--altitude 必须是 -500 到 9000 米之间的数字");
+                return 1;
+            }
+        },
+        None => None,
+    };
     let seed: u64 = get(&flags, "seed").and_then(|v| v.parse().ok()).unwrap_or(0);
     let seed = if seed == 0 { (now_ms() % 2_147_483_647) as u64 } else { seed };
 
@@ -131,7 +142,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
     );
 
     let mut log = logger();
-    let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check: face as i64, seed };
+    let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check: face as i64, manual_altitude, seed };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {
             println!(
@@ -145,6 +156,29 @@ fn cmd_run(rest: &[&str]) -> i32 {
         }
         Err(e) => {
             eprintln!("跑步提交失败: {e}");
+            1
+        }
+    }
+}
+
+fn cmd_template(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let Some(path) = get(&flags, "file") else {
+        eprintln!("缺少 --file <GPX/JSON>");
+        return 1;
+    };
+    match crate::template::load(path) {
+        Ok(samples) => {
+            let summary = crate::template::summarize(path, &samples);
+            println!("本地模板分析（仅预览，不上传）");
+            println!("文件：{}", summary.source);
+            println!("采样点：{}", summary.samples);
+            println!("海拔范围：{:.1}–{:.1} m", summary.min_m, summary.max_m);
+            println!("累计上升：{:.1} m；累计下降：{:.1} m", summary.gain_m, summary.loss_m);
+            0
+        }
+        Err(e) => {
+            eprintln!("模板读取失败：{e}");
             1
         }
     }

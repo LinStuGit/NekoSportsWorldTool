@@ -20,6 +20,8 @@ pub struct RunParams {
     /// 开始时间（毫秒）。
     pub start_ms: i64,
     pub face_check: i64,
+    /// 用户手动填写的绝对海拔（米）；None 使用生成器海拔。
+    pub manual_altitude: Option<f64>,
     pub seed: u64,
 }
 
@@ -99,7 +101,11 @@ pub fn run_full_flow(
     ));
     // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用
     let start_ms = params.start_ms + (rand::random::<i64>() % 5) * 1000;
-    let track = gen_track(params.dist, params.dur, params.seed, (anchor.latitude, anchor.longitude), start_ms, &pts_bd);
+    let mut track = gen_track(params.dist, params.dur, params.seed, (anchor.latitude, anchor.longitude), start_ms, &pts_bd);
+    if let Some(altitude_m) = params.manual_altitude {
+        crate::track::altitude::override_bd_a(&mut track, altitude_m)?;
+        log(&format!("√ [track] 已用手动海拔 {:.2}m 覆盖 {} 个点，爬升/圈数据将按覆盖值计算", altitude_m, track.locations.len()));
+    }
     log(&format!(
         "√ [track] {} 点 totalDis={:.0}m steps={} 起点={}",
         track.locations.len(),

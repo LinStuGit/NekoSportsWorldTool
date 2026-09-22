@@ -335,6 +335,7 @@ impl App {
                 dist_max: config.dist_max,
                 pace_min: config.pace_min,
                 pace_max: config.pace_max,
+                manual_altitude: config.manual_altitude.map(|v| v.to_string()).unwrap_or_default(),
                 start_mode: 0,
                 days_ago: 0,
                 hour: 12,
