@@ -95,15 +95,17 @@ fn cmd_run(rest: &[&str]) -> i32 {
     let days_ago: i64 = get(&flags, "days-ago").and_then(|v| v.parse().ok()).unwrap_or(0).clamp(0, 3);
     let time_spec = get(&flags, "time").unwrap_or("");
     let face = get(&flags, "face").map(|v| v == "1" || v == "true").unwrap_or(true);
-    let manual_altitude = match get(&flags, "altitude") {
-        Some(value) => match value.parse::<f64>() {
-            Ok(value) if value.is_finite() && (-500.0..=9000.0).contains(&value) => Some(value),
-            _ => {
-                eprintln!("--altitude 必须是 -500 到 9000 米之间的数字");
+    let (manual_altitude, manual_altitude_range) = match get(&flags, "altitude") {
+        Some(value) => match crate::track::altitude::parse_spec(value) {
+            Ok(Some(crate::track::altitude::AltitudeSpec::Single(value))) => (Some(value), None),
+            Ok(Some(crate::track::altitude::AltitudeSpec::Range(range))) => (None, Some(range)),
+            Ok(None) => (None, None),
+            Err(e) => {
+                eprintln!("--altitude {e}");
                 return 1;
             }
         },
-        None => None,
+        None => (None, None),
     };
     let seed: u64 = get(&flags, "seed").and_then(|v| v.parse().ok()).unwrap_or(0);
     let seed = if seed == 0 { (now_ms() % 2_147_483_647) as u64 } else { seed };
@@ -142,7 +144,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
     );
 
     let mut log = logger();
-    let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check: face as i64, manual_altitude, seed };
+    let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check: face as i64, manual_altitude, manual_altitude_range, seed };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {
             println!(

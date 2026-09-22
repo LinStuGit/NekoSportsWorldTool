@@ -273,15 +273,15 @@ impl App {
                 });
             }
             mobile::row(ui, |ui| {
-                ui.label("手动海拔（米）：");
+                ui.label("手动海拔（米/区间）：");
                 mobile::text_edit(
                     ui,
                     "run_manual_altitude",
                     &mut page.manual_altitude,
-                    crate::platform::InputKind::Decimal,
+                    crate::platform::InputKind::Text,
                     120.0,
                 );
-                ui.label("留空使用自动海拔");
+                ui.label("留空自动；可填 17.2 或 11.6-22.8");
             });
             mobile::row(ui, |ui| {
                 ui.label("开始时间：");
@@ -415,15 +415,17 @@ impl App {
             Some(p) => p,
             None => return,
         };
-        let manual_altitude = match page.manual_altitude.trim() {
-            "" => None,
-            text => match text.parse::<f64>() {
-                Ok(value) if value.is_finite() && (-500.0..=9000.0).contains(&value) => Some(value),
-                _ => {
-                    self.status = "手动海拔必须是 -500 到 9000 米之间的数字".into();
-                    return;
-                }
-            },
+        let altitude_spec = match crate::track::altitude::parse_spec(&page.manual_altitude) {
+            Ok(spec) => spec,
+            Err(e) => {
+                self.status = e;
+                return;
+            }
+        };
+        let (manual_altitude, manual_altitude_range) = match altitude_spec {
+            None => (None, None),
+            Some(crate::track::altitude::AltitudeSpec::Single(value)) => (Some(value), None),
+            Some(crate::track::altitude::AltitudeSpec::Range(range)) => (None, Some(range)),
         };
         let (dist, dur) = (plan.dist * 1000.0, plan.dur); // 米
         let start_ms = plan.start_ms;
@@ -434,6 +436,7 @@ impl App {
         self.config.pace_max = page.pace_max;
         self.config.face_check = page.face_check;
         self.config.manual_altitude = manual_altitude;
+        self.config.manual_altitude_range = manual_altitude_range;
         let _ = crate::api::model::save_config(&self.config);
 
         let identity = self.identity.clone();
@@ -450,7 +453,7 @@ impl App {
             let mut log = App::logger(tx.clone());
             let seed = (crate::crypto::envelope::now_ms() % 2_147_483_647) as u64;
             let mut client = crate::api::client::ApiClient::new(identity, Some(session));
-            let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check, manual_altitude, seed };
+            let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check, manual_altitude, manual_altitude_range, seed };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {
                     log(&format!(

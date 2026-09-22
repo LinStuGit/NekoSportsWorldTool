@@ -64,6 +64,9 @@ pub struct Config {
     /// 跑步时覆盖轨迹点 bdA；为空表示使用生成器的海拔曲线。
     #[serde(default)]
     pub manual_altitude: Option<f64>,
+    /// 跑步时将生成器海拔曲线映射到此范围；为空表示不使用范围覆盖。
+    #[serde(default)]
+    pub manual_altitude_range: Option<crate::track::altitude::AltitudeRange>,
     #[serde(default = "default_ai_minutes")]
     pub ai_minutes: i64,
     #[serde(default = "default_ai_reps")]
@@ -104,6 +107,7 @@ impl Default for Config {
             pace_max: default_pace_max(),
             face_check: true,
             manual_altitude: None,
+            manual_altitude_range: None,
             ai_minutes: default_ai_minutes(),
             ai_reps: default_ai_reps(),
             update_check: default_update_check(),

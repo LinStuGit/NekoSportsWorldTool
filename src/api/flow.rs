@@ -22,6 +22,8 @@ pub struct RunParams {
     pub face_check: i64,
     /// 用户手动填写的绝对海拔（米）；None 使用生成器海拔。
     pub manual_altitude: Option<f64>,
+    /// 用户手动填写的海拔范围；与单值字段兼容，范围优先。
+    pub manual_altitude_range: Option<crate::track::altitude::AltitudeRange>,
     pub seed: u64,
 }
 
@@ -102,7 +104,10 @@ pub fn run_full_flow(
     // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用
     let start_ms = params.start_ms + (rand::random::<i64>() % 5) * 1000;
     let mut track = gen_track(params.dist, params.dur, params.seed, (anchor.latitude, anchor.longitude), start_ms, &pts_bd);
-    if let Some(altitude_m) = params.manual_altitude {
+    if let Some(range) = params.manual_altitude_range {
+        crate::track::altitude::override_bd_a_range(&mut track, range)?;
+        log(&format!("√ [track] 已将海拔曲线映射到 {:.2}-{:.2}m，覆盖 {} 个点，爬升/圈数据将按覆盖值计算", range.min_m, range.max_m, track.locations.len()));
+    } else if let Some(altitude_m) = params.manual_altitude {
         crate::track::altitude::override_bd_a(&mut track, altitude_m)?;
         log(&format!("√ [track] 已用手动海拔 {:.2}m 覆盖 {} 个点，爬升/圈数据将按覆盖值计算", altitude_m, track.locations.len()));
     }
