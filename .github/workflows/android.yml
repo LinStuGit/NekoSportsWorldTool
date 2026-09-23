@@ -60,12 +60,13 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - uses: android-actions/setup-android@v3
-
       - name: Install Android SDK components
         shell: pwsh
         run: |
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" | Out-Null
+          $sdkmanager = Join-Path $env:ANDROID_HOME 'cmdline-tools\latest\bin\sdkmanager.bat'
+          if (-not (Test-Path -LiteralPath $sdkmanager)) { throw "sdkmanager not found under ANDROID_HOME=$env:ANDROID_HOME" }
+          & $sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865"
+          if ($LASTEXITCODE -ne 0) { throw "sdkmanager exited with $LASTEXITCODE" }
 
       - name: Restore signing key
         uses: actions/cache@v4
