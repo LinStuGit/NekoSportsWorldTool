@@ -1,0 +1,92 @@
+# Android APK 自动构建
+#
+# 触发方式：
+#   ① 推送包含 android/ 变更的 main 分支提交
+#   ② 手动：Actions 页面 Run workflow（可选 ABI 与 debug/release）
+#   ③ 推送 tag：git tag v0.2.0-android.1 && git push origin v0.2.0-android.1（额外发布 Release）
+#
+# 产物：android/build/<abi>-<profile>/NekoSportsWorldTool-<abi>.apk
+#
+# 签名注意：本地测试密钥 android/.signing/local-test.keystore 由首次构建自动生成，
+# 通过 actions/cache 固定保存；若缓存被清除会重新生成密钥，签名变化后手机无法覆盖安装。
+
+name: Android Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+    tags: ["v*-android*"]
+  workflow_dispatch:
+    inputs:
+      abi:
+        description: ABI
+        type: choice
+        default: arm64-v8a
+        options: [arm64-v8a, x86_64]
+      profile:
+        description: 构建模式
+        type: choice
+        default: release
+        options: [release, debug]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      ABI: ${{ github.event.inputs.abi || 'arm64-v8a' }}
+      PROFILE: ${{ github.event.inputs.profile || 'release' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target triple
+        id: target
+        shell: pwsh
+        run: |
+          $target = if ($env:ABI -eq 'x86_64') { 'x86_64-linux-android' } else { 'aarch64-linux-android' }
+          "triple=$target" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ steps.target.outputs.triple }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        shell: pwsh
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865" | Out-Null
+
+      - name: Restore signing key
+        uses: actions/cache@v4
+        with:
+          path: android/.signing
+          key: neko-android-signing-v1
+
+      - name: Build APK
+        shell: pwsh
+        run: ./android/build.ps1 -Abi "$env:ABI" -Profile "$env:PROFILE"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NekoSportsWorldTool-android-${{ env.ABI }}-${{ env.PROFILE }}
+          path: android/build/*/NekoSportsWorldTool-*.apk
+          if-no-files-found: error
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/build/*/NekoSportsWorldTool-*.apk
+          generate_release_notes: true
