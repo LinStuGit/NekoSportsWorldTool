@@ -275,7 +275,8 @@ impl App {
                 });
             }
             mobile::row(ui, |ui| {
-                ui.label("手动海拔范围（米）：");
+                ui.label("海拔范围（米）：");
+                ui.label("最低");
                 mobile::text_edit(
                     ui,
                     "run_manual_altitude_min",
@@ -283,7 +284,8 @@ impl App {
                     crate::platform::InputKind::Text,
                     80.0,
                 );
-                ui.label("–");
+                ui.label("-");
+                ui.label("最高");
                 mobile::text_edit(
                     ui,
                     "run_manual_altitude_max",
@@ -291,7 +293,7 @@ impl App {
                     crate::platform::InputKind::Text,
                     80.0,
                 );
-                ui.label("留空自动；填写最低和最高海拔");
+                ui.label("留空自动");
             });
             mobile::row(ui, |ui| {
                 ui.label("开始时间：");
