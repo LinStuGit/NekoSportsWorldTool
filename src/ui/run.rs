@@ -61,8 +61,10 @@ pub struct RunPage {
     pub dist_max: f32,
     pub pace_min: f32,
     pub pace_max: f32,
-    /// 手动绝对海拔（米）；空白表示使用生成器默认海拔。
-    pub manual_altitude: String,
+    /// 手动海拔范围的最低值；与最高值同时为空表示使用生成器默认海拔。
+    pub manual_altitude_min: String,
+    /// 手动海拔范围的最高值。
+    pub manual_altitude_max: String,
     /// 0=随机时刻 1=指定时刻
     pub start_mode: usize,
     pub days_ago: i64,
@@ -273,15 +275,23 @@ impl App {
                 });
             }
             mobile::row(ui, |ui| {
-                ui.label("手动海拔（米/区间）：");
+                ui.label("手动海拔范围（米）：");
                 mobile::text_edit(
                     ui,
-                    "run_manual_altitude",
-                    &mut page.manual_altitude,
+                    "run_manual_altitude_min",
+                    &mut page.manual_altitude_min,
                     crate::platform::InputKind::Text,
-                    120.0,
+                    80.0,
                 );
-                ui.label("留空自动；可填 17.2 或 11.6-22.8");
+                ui.label("–");
+                mobile::text_edit(
+                    ui,
+                    "run_manual_altitude_max",
+                    &mut page.manual_altitude_max,
+                    crate::platform::InputKind::Text,
+                    80.0,
+                );
+                ui.label("留空自动；填写最低和最高海拔");
             });
             mobile::row(ui, |ui| {
                 ui.label("开始时间：");
@@ -415,18 +425,17 @@ impl App {
             Some(p) => p,
             None => return,
         };
-        let altitude_spec = match crate::track::altitude::parse_spec(&page.manual_altitude) {
-            Ok(spec) => spec,
+        let manual_altitude_range = match crate::track::altitude::parse_range_fields(
+            &page.manual_altitude_min,
+            &page.manual_altitude_max,
+        ) {
+            Ok(range) => range,
             Err(e) => {
                 self.status = e;
                 return;
             }
         };
-        let (manual_altitude, manual_altitude_range) = match altitude_spec {
-            None => (None, None),
-            Some(crate::track::altitude::AltitudeSpec::Single(value)) => (Some(value), None),
-            Some(crate::track::altitude::AltitudeSpec::Range(range)) => (None, Some(range)),
-        };
+        let manual_altitude = None;
         let (dist, dur) = (plan.dist * 1000.0, plan.dur); // 米
         let start_ms = plan.start_ms;
         let face_check = if page.face_check { 1 } else { 0 };
@@ -435,7 +444,7 @@ impl App {
         self.config.pace_min = page.pace_min;
         self.config.pace_max = page.pace_max;
         self.config.face_check = page.face_check;
-        self.config.manual_altitude = manual_altitude;
+        self.config.manual_altitude = None;
         self.config.manual_altitude_range = manual_altitude_range;
         let _ = crate::api::model::save_config(&self.config);
 
@@ -491,7 +500,8 @@ mod tests {
             dist_max: 2.2,
             pace_min: 350.0,
             pace_max: 370.0,
-            manual_altitude: String::new(),
+            manual_altitude_min: String::new(),
+            manual_altitude_max: String::new(),
             start_mode,
             days_ago,
             hour: 12,

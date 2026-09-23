@@ -134,6 +134,30 @@ mod validation_tests {
     #[test] fn rejects_empty_or_malformed_five_point_payload() { assert!(validate_five_point_wrapper("{}").is_err()); assert!(validate_five_point_wrapper(r#"{"fivePointJson":"[]"}"#).is_err()); }
 
     #[test]
+    fn laps_use_requested_range_ascent() {
+        let points = vec![(38.901678, 121.540241), (38.902564, 121.541233)];
+        let mut track = crate::track::generator::build(
+            1200.0,
+            600,
+            7,
+            (38.9, 121.54),
+            1_700_000_000_000,
+            &points,
+        );
+        crate::track::altitude::override_bd_a_range(
+            &mut track,
+            crate::track::altitude::AltitudeRange { min_m: 1.0, max_m: 13.0 },
+        )
+        .unwrap();
+        let laps = build_laps(&track, track.startTime);
+        let ascent: f64 = laps
+            .iter()
+            .map(|lap| lap["elevationGain"].as_f64().unwrap_or(0.0))
+            .sum();
+        assert!((ascent - 12.0).abs() <= 0.05, "ascent={ascent}");
+    }
+
+    #[test]
     fn laps_are_rebuilt_from_overridden_altitude() {
         let points = vec![(38.901678, 121.540241), (38.902564, 121.541233)];
         let mut track = crate::track::generator::build(
@@ -231,6 +255,21 @@ fn build_laps(track: &Track, start_ms: i64) -> Vec<Value> {
             prev_t = t_now;
             prev_steps = pt.steps;
             gain = 0.0;
+        }
+    }
+    if let Some(target) = track.altitude_gain_override {
+        let natural = laps
+            .iter()
+            .map(|lap| lap["elevationGain"].as_f64().unwrap_or(0.0))
+            .sum::<f64>();
+        if natural > f64::EPSILON {
+            let scale = target / natural;
+            for lap in &mut laps {
+                let gain = lap["elevationGain"].as_f64().unwrap_or(0.0);
+                lap["elevationGain"] = serde_json::Value::from(round_to(gain * scale, 2));
+            }
+        } else if let Some(last) = laps.last_mut() {
+            last["elevationGain"] = serde_json::Value::from(round_to(target, 2));
         }
     }
     laps

@@ -115,7 +115,7 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     let total_steps = track.totalSteps;
     let start_ms = track.startTime;
     let stop_ms = start_ms + total_time * 1000;
-    let ascent = total_ascent(&track.locations);
+    let ascent = track.altitude_gain_override.unwrap_or_else(|| total_ascent(&track.locations));
     let power = avg_power(p.weight, total_dis, total_time);
     let kcal = official_kcal(p.weight, total_time, total_dis);
 
