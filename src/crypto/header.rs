@@ -62,6 +62,18 @@ fn default_anchor_lon() -> f64 { 121.540241 }
 fn default_city() -> String { "大连市".into() }
 
 impl HeaderIdentity {
+    /// 返回设备页配置的锚点，并执行统一边界校验。
+    pub fn anchor_coordinate(&self) -> Result<crate::location::Coordinate, String> {
+        crate::location::Coordinate::new(self.anchor_lat, self.anchor_lon, 0.0)
+    }
+
+    /// 旧版本首次启动会写入大连默认值。未明确配置前禁止将它作为异地跑步位置使用。
+    pub fn has_unconfigured_default_location(&self) -> bool {
+        self.city.trim().is_empty()
+            || self.city.trim() == crate::location::default_city()
+            || self.anchor_coordinate().map(|c| c.is_default_dalian()).unwrap_or(true)
+    }
+
     /// 安装时间：持久值优先；缺失时按平台惯例回退（iOS 3 天 / Android 90 天前）。
     pub fn install_time(&self, ts: i64) -> i64 {
         if self.app_install_time > 0 {
@@ -319,5 +331,17 @@ mod tests {
         // 身份未持久化安装时间时，回退值在同一请求内至少自洽
         let fallback = HeaderIdentity::default();
         assert_eq!(fallback.install_time(1000), 1000 - 3 * 86_400_000);
+    }
+
+    #[test]
+    fn legacy_dalian_defaults_are_not_accepted_for_a_run() {
+        assert!(HeaderIdentity::default().has_unconfigured_default_location());
+        let configured = HeaderIdentity {
+            city: "石家庄市".into(),
+            anchor_lat: 38.0428,
+            anchor_lon: 114.5149,
+            ..Default::default()
+        };
+        assert!(!configured.has_unconfigured_default_location());
     }
 }

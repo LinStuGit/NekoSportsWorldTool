@@ -61,6 +61,12 @@ pub struct Config {
     pub pace_max: f32,
     #[serde(default)]
     pub face_check: bool,
+    /// 跑步时覆盖轨迹点 bdA；为空表示使用生成器的海拔曲线。
+    #[serde(default)]
+    pub manual_altitude: Option<f64>,
+    /// 跑步时将生成器海拔曲线映射到此范围；为空表示不使用范围覆盖。
+    #[serde(default)]
+    pub manual_altitude_range: Option<crate::track::altitude::AltitudeRange>,
     #[serde(default = "default_ai_minutes")]
     pub ai_minutes: i64,
     #[serde(default = "default_ai_reps")]
@@ -100,6 +106,8 @@ impl Default for Config {
             pace_min: default_pace_min(),
             pace_max: default_pace_max(),
             face_check: true,
+            manual_altitude: None,
+            manual_altitude_range: None,
             ai_minutes: default_ai_minutes(),
             ai_reps: default_ai_reps(),
             update_check: default_update_check(),
@@ -322,15 +330,36 @@ mod storage_tests {
 /// 点位缓存：{ts_ms, points}，TTL 300s（服务端限流 10603：5 分钟 3 次）。
 pub const POINTS_TTL_MS: i64 = 300_000;
 
-pub fn load_points_cache() -> Option<(i64, Vec<serde_json::Value>)> {
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct PointsCache {
+    ts: i64,
+    anchor: crate::location::Coordinate,
+    points: Vec<serde_json::Value>,
+}
+
+/// 只返回与本次锚点相同的缓存。旧版未记录锚点的缓存会自然失效，避免串城市。
+pub fn load_points_cache_for(anchor: crate::location::Coordinate) -> Option<(i64, Vec<serde_json::Value>)> {
     let v: serde_json::Value = read_json("points_cache.json")?;
-    let ts = v.get("ts")?.as_i64()?;
-    let pts = v.get("points")?.as_array()?.clone();
+    let cache: PointsCache = serde_json::from_value(v).ok()?;
+    if !cache.anchor.is_near(anchor, 0.0001) { return None; }
+    let ts = cache.ts;
+    let pts = cache.points;
     Some((ts, pts))
 }
 
-pub fn save_points_cache(points: &[serde_json::Value]) -> Result<(), String> {
-    let doc =
-        serde_json::json!({ "ts": crate::crypto::envelope::now_ms(), "points": points });
+pub fn save_points_cache(anchor: crate::location::Coordinate, points: &[serde_json::Value]) -> Result<(), String> {
+    let doc = PointsCache { ts: crate::crypto::envelope::now_ms(), anchor, points: points.to_vec() };
     write_json("points_cache.json", &doc)
+}
+
+#[cfg(test)]
+mod points_cache_tests {
+    use super::*;
+    #[test]
+    fn cache_is_scoped_to_anchor() {
+        let cache = PointsCache { ts: 1, anchor: crate::location::Coordinate::new(39.9, 116.4, 0.0).unwrap(), points: vec![] };
+        let decoded: PointsCache = serde_json::from_value(serde_json::to_value(cache).unwrap()).unwrap();
+        assert!(decoded.anchor.is_near(crate::location::Coordinate::new(39.9, 116.4, 0.0).unwrap(), 0.0001));
+        assert!(!decoded.anchor.is_near(crate::location::Coordinate::new(38.9, 121.5, 0.0).unwrap(), 0.0001));
+    }
 }

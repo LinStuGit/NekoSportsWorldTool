@@ -110,6 +110,49 @@ pub fn five_point_wrapper(points: &[Value], start_ms: i64) -> String {
     .to_string()
 }
 
+/// 校验提交用五点轨迹仍是同一次点位请求产生的有效数据。
+pub fn validate_five_point_wrapper(wrapper: &str) -> Result<(), String> {
+    let outer: Value = serde_json::from_str(wrapper).map_err(|e| format!("五点轨迹 JSON 无效: {e}"))?;
+    let raw = outer.get("fivePointJson").and_then(Value::as_str).ok_or("五点轨迹缺少 fivePointJson")?;
+    let points: Vec<Value> = serde_json::from_str(raw).map_err(|e| format!("五点轨迹数组无效: {e}"))?;
+    if points.is_empty() { return Err("五点轨迹不能为空".into()); }
+    for point in points {
+        let lat = point.get("lat").and_then(Value::as_f64).unwrap_or(0.0);
+        let lon = point.get("lon").and_then(Value::as_f64).unwrap_or(0.0);
+        let glat = point.get("glat").and_then(Value::as_f64).unwrap_or(0.0);
+        let glon = point.get("glon").and_then(Value::as_f64).unwrap_or(0.0);
+        if (lat == 0.0 && lon == 0.0) || (glat == 0.0 && glon == 0.0) { return Err("五点轨迹包含缺失坐标".into()); }
+        crate::location::Coordinate::new(lat, lon, 0.0)?;
+        crate::location::Coordinate::new(glat, glon, 0.0)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    #[test] fn rejects_empty_or_malformed_five_point_payload() { assert!(validate_five_point_wrapper("{}").is_err()); assert!(validate_five_point_wrapper(r#"{"fivePointJson":"[]"}"#).is_err()); }
+
+    #[test]
+    fn laps_are_rebuilt_from_overridden_altitude() {
+        let points = vec![(38.901678, 121.540241), (38.902564, 121.541233)];
+        let mut track = crate::track::generator::build(
+            1200.0,
+            600,
+            7,
+            (38.9, 121.54),
+            1_700_000_000_000,
+            &points,
+        );
+        crate::track::altitude::override_bd_a(&mut track, 36.75).unwrap();
+        let laps = build_laps(&track, track.startTime);
+        assert!(!laps.is_empty());
+        assert!(laps.iter().all(|lap| lap["elevationGain"] == 0.0));
+        assert!(laps.iter().all(|lap| lap["endAltAbs"] == 36.75));
+        assert!(laps.iter().all(|lap| lap["endAltRel"] == 0.0));
+    }
+}
+
 /// 10s 时间窗，id=(rrid%100000)*1000+窗口序秒（6 个真人样本跨 9 月记录验证一致；
 /// 旧版 App 样本为全局序号，不适用当前版本）。
 fn build_windows(track: &Track, rrid: i64) -> (Vec<Value>, Vec<Value>) {

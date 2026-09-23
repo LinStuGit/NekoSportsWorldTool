@@ -12,6 +12,7 @@ use crate::crypto::sign::{original_sign, signature};
 use crate::track::calorie::{avg_power, official_kcal};
 use crate::track::geom::round_to;
 use crate::track::model::{GenPoint, Track};
+use crate::track::wire::validate_five_point_wrapper;
 use serde_json::{json, Map, Value};
 
 pub const RECORD_PATH: &str = "/api/v70260/runnings/save/record";
@@ -85,6 +86,7 @@ pub struct SubmitParams {
     pub weight: f64,
     pub face_check: i64,
     pub five_point_json: String,
+    pub address: String,
 }
 
 #[allow(dead_code)]
@@ -105,6 +107,9 @@ pub struct SubmitResult {
 /// 提交跑步记录（sportType=1 自由跑 + 实时五点）。
 pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnMut(&str)) -> Result<SubmitResult, String> {
     let track = &p.track;
+    let start_coordinate = track.validate_consistency()?;
+    if p.five_point_json.is_empty() { return Err("五点轨迹不能为空".into()); }
+    validate_five_point_wrapper(&p.five_point_json)?;
     let total_time = track.totalTime;
     let total_dis = track.totalDistance;
     let total_steps = track.totalSteps;
@@ -152,8 +157,8 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     body.insert("stepsPerTenSec".into(), Value::Array(android_tensec(track, start_ms, "steps")));
     body.insert("isUpload".into(), Value::Bool(false));
     body.insert("more".into(), Value::Bool(false));
-    body.insert("latitude".into(), Value::from(0.0));
-    body.insert("longitude".into(), Value::from(0.0));
+    body.insert("latitude".into(), Value::from(start_coordinate.latitude));
+    body.insert("longitude".into(), Value::from(start_coordinate.longitude));
     body.insert("maxRunTime".into(), Value::from(0));
     body.insert("minSteps".into(), Value::from(0));
     if !p.five_point_json.is_empty() {
@@ -165,7 +170,7 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     body.insert("unauthorized".into(), Value::from(0));
     body.insert("themeId".into(), Value::from(0));
     body.insert("goalId".into(), Value::Null);
-    body.insert("address".into(), Value::String(client.identity.city.clone()));
+    body.insert("address".into(), Value::String(p.address.trim().to_string()));
 
     let body_val = Value::Object(body.clone());
     let sig = signature(&body_val, false);

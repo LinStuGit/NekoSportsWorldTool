@@ -3,7 +3,9 @@
 mod api;
 pub mod cli;
 mod crypto;
+pub mod location;
 pub mod platform;
+pub mod template;
 mod relaunch;
 mod textlog;
 mod track;

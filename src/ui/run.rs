@@ -61,6 +61,8 @@ pub struct RunPage {
     pub dist_max: f32,
     pub pace_min: f32,
     pub pace_max: f32,
+    /// 手动绝对海拔（米）；空白表示使用生成器默认海拔。
+    pub manual_altitude: String,
     /// 0=随机时刻 1=指定时刻
     pub start_mode: usize,
     pub days_ago: i64,
@@ -271,6 +273,17 @@ impl App {
                 });
             }
             mobile::row(ui, |ui| {
+                ui.label("手动海拔（米/区间）：");
+                mobile::text_edit(
+                    ui,
+                    "run_manual_altitude",
+                    &mut page.manual_altitude,
+                    crate::platform::InputKind::Text,
+                    120.0,
+                );
+                ui.label("留空自动；可填 17.2 或 11.6-22.8");
+            });
+            mobile::row(ui, |ui| {
                 ui.label("开始时间：");
                 ui.radio_value(&mut page.start_mode, 0, "随机时刻");
                 ui.radio_value(&mut page.start_mode, 1, "指定时刻");
@@ -402,6 +415,18 @@ impl App {
             Some(p) => p,
             None => return,
         };
+        let altitude_spec = match crate::track::altitude::parse_spec(&page.manual_altitude) {
+            Ok(spec) => spec,
+            Err(e) => {
+                self.status = e;
+                return;
+            }
+        };
+        let (manual_altitude, manual_altitude_range) = match altitude_spec {
+            None => (None, None),
+            Some(crate::track::altitude::AltitudeSpec::Single(value)) => (Some(value), None),
+            Some(crate::track::altitude::AltitudeSpec::Range(range)) => (None, Some(range)),
+        };
         let (dist, dur) = (plan.dist * 1000.0, plan.dur); // 米
         let start_ms = plan.start_ms;
         let face_check = if page.face_check { 1 } else { 0 };
@@ -410,6 +435,8 @@ impl App {
         self.config.pace_min = page.pace_min;
         self.config.pace_max = page.pace_max;
         self.config.face_check = page.face_check;
+        self.config.manual_altitude = manual_altitude;
+        self.config.manual_altitude_range = manual_altitude_range;
         let _ = crate::api::model::save_config(&self.config);
 
         let identity = self.identity.clone();
@@ -426,7 +453,7 @@ impl App {
             let mut log = App::logger(tx.clone());
             let seed = (crate::crypto::envelope::now_ms() % 2_147_483_647) as u64;
             let mut client = crate::api::client::ApiClient::new(identity, Some(session));
-            let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check, seed };
+            let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check, manual_altitude, manual_altitude_range, seed };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {
                     log(&format!(
@@ -464,6 +491,7 @@ mod tests {
             dist_max: 2.2,
             pace_min: 350.0,
             pace_max: 370.0,
+            manual_altitude: String::new(),
             start_mode,
             days_ago,
             hour: 12,

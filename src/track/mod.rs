@@ -1,6 +1,7 @@
 //! 轨迹层：生成器 / OBS 组装 / 官方卡路里。
 
 pub mod calorie;
+pub mod altitude;
 pub mod geom;
 pub mod generator;
 pub mod model;

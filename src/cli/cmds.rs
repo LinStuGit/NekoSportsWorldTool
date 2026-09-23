@@ -12,6 +12,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "login" => cmd_login(&rest),
         "logout" => cmd_logout(),
         "run" => cmd_run(&rest),
+        "template" => cmd_template(&rest),
         "ai" => cmd_ai(&rest),
         "ai-list" => cmd_ai_list(),
         "records" => cmd_records(),
@@ -94,6 +95,18 @@ fn cmd_run(rest: &[&str]) -> i32 {
     let days_ago: i64 = get(&flags, "days-ago").and_then(|v| v.parse().ok()).unwrap_or(0).clamp(0, 3);
     let time_spec = get(&flags, "time").unwrap_or("");
     let face = get(&flags, "face").map(|v| v == "1" || v == "true").unwrap_or(true);
+    let (manual_altitude, manual_altitude_range) = match get(&flags, "altitude") {
+        Some(value) => match crate::track::altitude::parse_spec(value) {
+            Ok(Some(crate::track::altitude::AltitudeSpec::Single(value))) => (Some(value), None),
+            Ok(Some(crate::track::altitude::AltitudeSpec::Range(range))) => (None, Some(range)),
+            Ok(None) => (None, None),
+            Err(e) => {
+                eprintln!("--altitude {e}");
+                return 1;
+            }
+        },
+        None => (None, None),
+    };
     let seed: u64 = get(&flags, "seed").and_then(|v| v.parse().ok()).unwrap_or(0);
     let seed = if seed == 0 { (now_ms() % 2_147_483_647) as u64 } else { seed };
 
@@ -131,7 +144,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
     );
 
     let mut log = logger();
-    let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check: face as i64, seed };
+    let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check: face as i64, manual_altitude, manual_altitude_range, seed };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {
             println!(
@@ -145,6 +158,29 @@ fn cmd_run(rest: &[&str]) -> i32 {
         }
         Err(e) => {
             eprintln!("跑步提交失败: {e}");
+            1
+        }
+    }
+}
+
+fn cmd_template(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let Some(path) = get(&flags, "file") else {
+        eprintln!("缺少 --file <GPX/JSON>");
+        return 1;
+    };
+    match crate::template::load(path) {
+        Ok(samples) => {
+            let summary = crate::template::summarize(path, &samples);
+            println!("本地模板分析（仅预览，不上传）");
+            println!("文件：{}", summary.source);
+            println!("采样点：{}", summary.samples);
+            println!("海拔范围：{:.1}–{:.1} m", summary.min_m, summary.max_m);
+            println!("累计上升：{:.1} m；累计下降：{:.1} m", summary.gain_m, summary.loss_m);
+            0
+        }
+        Err(e) => {
+            eprintln!("模板读取失败：{e}");
             1
         }
     }
@@ -357,7 +393,14 @@ fn cmd_obs_sample(rest: &[&str]) -> i32 {
         }
     };
     let mut log = |s: &str| eprintln!("{s}");
-    let pts = match crate::api::points::fetch_points(&mut client, (0.0, 0.0), &mut log) {
+    let anchor = match client.identity.anchor_coordinate() {
+        Ok(value) => value,
+        Err(e) => {
+            eprintln!("定位锚点无效: {e}");
+            return 1;
+        }
+    };
+    let pts = match crate::api::points::fetch_points(&mut client, anchor, &mut log) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("点位拉取失败: {e}");
@@ -366,7 +409,7 @@ fn cmd_obs_sample(rest: &[&str]) -> i32 {
     };
     let pts_bd = crate::api::points::points_bd(&pts);
     let start_ms = crate::crypto::envelope::now_ms() - dur * 1000;
-    let track = crate::track::generator::build(dist, dur, seed, (0.0, 0.0), start_ms, &pts_bd);
+    let track = crate::track::generator::build(dist, dur, seed, (anchor.latitude, anchor.longitude), start_ms, &pts_bd);
     let sess = client.login.clone().unwrap_or_default();
     let uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
     let obj = crate::track::wire::build_obs_object(&track, rrid, &uuid, sess.uid, &pts);
