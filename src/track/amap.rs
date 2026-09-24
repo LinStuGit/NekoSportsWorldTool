@@ -15,8 +15,14 @@ use flate2::Compression;
 use std::io::Write;
 
 const AMAP_WALK_URL: &str = "https://restapi.amap.com/v3/direction/walking";
-/// 相邻打卡点间的步行路线距离上限（校园尺度不应超过 2km）。
-const MAX_LEG_M: f64 = 2000.0;
+/// 相邻打卡点间的步行路线距离上限（校园尺度绕行可到 2-3km）。
+const MAX_LEG_M: f64 = 3000.0;
+/// 步行距离 / 直线距离 的绕行系数上限；超过说明两点间没有连贯的
+/// 校内步行路网，路线在沿校外市政路绕大圈（如 OSM/高德均未绘制
+/// 校园道路的学校），生成的环会跑出校园。
+const MAX_DETOUR_RATIO: f64 = 3.5;
+/// 免费个人 Key QPS=3，段间至少 400ms。
+const LEG_INTERVAL_MS: u64 = 400;
 const CACHE_TTL: u64 = 7 * 24 * 3600;
 
 /// gzip + base64（本地缓存用，与 roads.rs 一致）。
@@ -132,8 +138,15 @@ pub fn plan_amap_ring(pts_bd: &[(f64, f64)], key: &str, log: &mut dyn FnMut(&str
         let b = pts_gcj[(i + 1) % pts_gcj.len()];
         log(&format!("[amap] 步行路线段 {}/{} …", i + 1, pts_gcj.len()));
         let (line, distance) = walk_leg(&agent, key, a, b)?;
+        let straight = dist_m(a, b);
         if distance > MAX_LEG_M {
             log(&format!("[amap] 段 {i} 步行距离 {distance:.0}m 超限，放弃道路环"));
+            return None;
+        }
+        if straight > 0.0 && distance / straight > MAX_DETOUR_RATIO {
+            log(&format!(
+                "[amap] 段 {i} 步行 {distance:.0}m / 直线 {straight:.0}m 绕行比过大（校内路网缺失），放弃道路环"
+            ));
             return None;
         }
         total += distance;
@@ -146,8 +159,8 @@ pub fn plan_amap_ring(pts_bd: &[(f64, f64)], key: &str, log: &mut dyn FnMut(&str
             }
             ring_gcj.push(p);
         }
-        // 请求间隔，避免触发限流
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // 请求间隔，避免触发免费 Key QPS 限制
+        std::thread::sleep(std::time::Duration::from_millis(LEG_INTERVAL_MS));
     }
     while ring_gcj.len() > 2 && dist_m(ring_gcj[0], *ring_gcj.last().unwrap()) < 0.05 {
         ring_gcj.pop();
@@ -217,5 +230,45 @@ mod tests {
         let pts = [(38.901678, 121.540241), (38.902564, 121.541233), (38.900921, 121.542310)];
         assert!(plan_amap_ring(&pts, "", &mut |_| {}).is_none());
         assert!(plan_amap_ring(&pts[..2], "test-key", &mut |_| {}).is_none());
+    }
+
+    /// 高德步行路网能力探测（广西职业技术大学）。需要环境变量 AMAP_KEY；
+    /// 本地运行：`AMAP_KEY=xxx HTTPS_PROXY=... cargo test --lib --locked -- --ignored --nocapture amap_walk_smoke`
+    #[test]
+    #[ignore = "需要高德 Key 与网络"]
+    fn amap_walk_smoke_guangxi_vocational_technical_university() {
+        let key = std::env::var("AMAP_KEY").expect("请设置 AMAP_KEY 环境变量");
+        let center = (22.5825052f64, 108.2332206f64);
+        let offsets: [(f64, f64); 5] = [
+            (0.0000, 0.0000),
+            (0.0040, 0.0010),
+            (0.0020, 0.0050),
+            (-0.0030, 0.0040),
+            (-0.0020, -0.0040),
+        ];
+        let pts_bd: Vec<(f64, f64)> = offsets
+            .iter()
+            .map(|&(dla, dlo)| {
+                let (gla, glo) = super::super::roads::wgs84_to_gcj02(center.0 + dla, center.1 + dlo);
+                super::super::roads::gcj02_to_bd09(gla, glo)
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let ring = plan_amap_ring(&pts_bd, &key, &mut |s: &str| println!("{s}"));
+        println!("耗时 {:.1}s", started.elapsed().as_secs_f32());
+        match ring {
+            Some(ring) => {
+                let mut total: f64 = ring.windows(2).map(|w| dist_m(w[0], w[1])).sum();
+                if let (Some(first), Some(last)) = (ring.first(), ring.last()) {
+                    total += dist_m(*last, *first);
+                }
+                println!("结论：高德步行路网可规划，{} 顶点，环长 {total:.0}m", ring.len());
+                for (i, p) in pts_bd.iter().enumerate() {
+                    let d = ring.iter().map(|q| dist_m(*p, *q)).fold(f64::INFINITY, f64::min);
+                    assert!(d < 2.0, "打卡点 {i} 距环 {d:.1}m");
+                }
+            }
+            None => println!("结论：高德步行路网规划失败（见上方日志，已具备回落 OSM/直线环）"),
+        }
     }
 }
