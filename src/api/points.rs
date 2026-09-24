@@ -189,7 +189,7 @@ pub(crate) fn area_from_payload(payload: &Value, points: &[Value]) -> crate::tra
     let geo_fences_json = fences.as_ref()
         .map(value_as_json_string)
         .filter(|value| !value.trim().is_empty() && value.trim() != "null" && value.trim() != "[]")
-        .unwrap_or_else(|| derive_fence_json(points));
+        .unwrap_or_else(|| "[]".into());
     let freedom_show_fence = show.as_ref()
         .and_then(value_as_bool)
         .unwrap_or(geo_fences_json.trim() != "[]");
@@ -229,17 +229,6 @@ fn value_as_json_string(value: &Value) -> String {
         Value::Null => "[]".into(),
         other => other.to_string(),
     }
-}
-
-/// 没有单独围栏字段时，用服务端返回的校园点位生成同一坐标系的闭合围栏，
-/// 这样 fixed_point_json/OBS 仍会明确要求详情页绘制绿色边界。
-fn derive_fence_json(points: &[Value]) -> String {
-    let fence: Vec<Value> = points.iter().filter_map(|point| {
-        let lat = point.get("lat").or_else(|| point.get("latitude"))?.as_f64()?;
-        let lon = point.get("lon").or_else(|| point.get("lng")).or_else(|| point.get("longitude"))?.as_f64()?;
-        Some(json!({"lat": lat, "lon": lon}))
-    }).collect();
-    if fence.len() >= 3 { Value::Array(fence).to_string() } else { "[]".into() }
 }
 
 /// 点位中心（BD 系）。
@@ -294,7 +283,7 @@ mod tests {
         let points = vec![json!({"lat": 1.0, "lon": 2.0}), json!({"lat": 1.1, "lon": 2.0}), json!({"lat": 1.1, "lon": 2.1})];
         let area = area_from_payload(&payload, &points);
         assert_eq!(area.run_area_id, 9);
-        assert!(area.freedom_show_fence);
-        assert_ne!(area.geo_fences_json, "[]");
+        assert!(!area.freedom_show_fence);
+        assert_eq!(area.geo_fences_json, "[]");
     }
 }
