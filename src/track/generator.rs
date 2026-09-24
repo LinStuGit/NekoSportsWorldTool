@@ -1,9 +1,9 @@
 //! 自然轨迹生成器。
 //!
-//! 画像驱动：打卡点沿线段组成闭合环（每段 18 采样）→ 弧长表；
+//! 画像驱动：打卡点拟合闭合环（Catmull-Rom，每段 18 采样）→ 弧长表；
 //! 采样间隔主 5s（80%）；速度曲线 = ramp × 疲劳 × 三正弦 × 余弦凹陷 × 微噪；
 //! 正常点按速度曲线分配位移并归一到精确总距离；所有采样点保持在跑步区域环线上，避免被服务端标成无效灰段；
-//! 哨兵点（首 type=0、索引1 type=5、末 type=6）；结尾断崖；点位吸附。
+//! 哨兵点（首 type∈{0,7}、索引1 type=5、末 type=6）；结尾断崖；点位吸附。
 #![allow(non_snake_case)]
 
 use super::geom::{fmt_gain_time, make_point_ring, make_polyline_ring, ring_point_at, round_to, to_bd, Rng, MET_PER_DEG_LAT, MET_PER_DEG_LNG};
@@ -132,10 +132,33 @@ pub fn build_with_ring(
     let seg_dist: Vec<f64> = (0..n).map(|i| w[i] * dts[i]).collect();
     let speeds: Vec<f64> = w.clone();
 
-    // 校园跑的有效轨迹点统一使用普通 type=0；type=5/6 只保留给起止哨兵。
-    // 混入漂移 type=-1、type=3 或 type=8 会让详情页把对应线段标成灰色。
-    let kinds: Vec<(i64, i64)> = vec![(0, 1); n];
-
+    let mut kinds: Vec<(i64, i64)> = Vec::with_capacity(n);
+    for _ in 0..n {
+        let u = rng.random();
+        if u < 0.39 {
+            kinds.push((3, 1));
+        } else if u < 0.93 {
+            kinds.push((0, 1));
+        } else if u < 0.96 {
+            // Invalid (-1) drift points make the server render gray segments
+            // and are not appropriate for a campus run that must stay inside
+            // the returned green area fence.
+            kinds.push(rng.choice(&[(3, 1), (0, 1), (1, 1), (2, 1)]));
+        } else {
+            kinds.push((rng.choice(&[1, 1, 1, 1, 2, 2]), 1));
+        }
+    }
+    for i in 1..kinds.len() {
+        let prev_drift = (-1 == kinds[i - 1].0) || kinds[i - 1].0 == 5 || kinds[i - 1].0 == 6;
+        if kinds[i].0 != -1 && prev_drift && rng.random() < 0.08 {
+            kinds[i] = (if rng.random() < 0.75 { 7 } else { 8 }, 1);
+        }
+    }
+    for i in 1..n {
+        if kinds[i].0 == -1 && kinds[i - 1].0 == -1 {
+            kinds[i] = (rng.choice(&[3, 0]), 1);
+        }
+    }
     let normal_idx: Vec<usize> =
         (0..n).filter(|&i| kinds[i].0 != -1 && i > 1).collect();
     let share: f64 = normal_idx.iter().map(|&i| seg_dist[i]).sum();
@@ -179,14 +202,19 @@ pub fn build_with_ring(
             let (bx, by) = pos(s);
             x = bx;
             y = by;
-            // 有效点严格落在线段环上，避免随机抖动越过绿色围栏。
-            px = bx;
-            py = by;
+            jx = 0.72 * jx + rng.gauss(0.0, 0.75);
+            jy = 0.72 * jy + rng.gauss(0.0, 0.75);
+            px = bx + jx;
+            py = by + jy;
             rad = round_to(
                 if typ == 3 { rng.uniform(1.4, 5.1) } else { rng.uniform(1.4, 2.4) },
                 2,
             );
-            state = 1;
+            state = if typ == 0 {
+                rng.weighted(&[(1, 145), (2, 45), (3, 164)])
+            } else {
+                rng.weighted(&[(1, 145), (2, 256), (3, 151)])
+            };
         } else {
             match lt {
                 4 => {
@@ -307,7 +335,7 @@ pub fn build_with_ring(
             bdA: round_to(alt, 2),
             bdD: round_to(brg, 2),
             bdS: round_to((avg_sp * rng.uniform(0.6, 0.95)).max(0.0), 3),
-            bdG: 1,
+            bdG: rng.choice(&[1, 1, 1, -1]),
             count: rng.randint(20, 88),
             dtr: 0.0,
             state,

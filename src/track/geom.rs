@@ -1,6 +1,6 @@
 //! 轨迹几何与随机工具。
 //!
-//! round 封装、RNG、打卡点线段环 + 折线环 + 弧长表 + 弧长插值。
+//! round 封装、RNG、打卡点 Catmull-Rom 拟合环 / 路网折线环 + 弧长表 + 弧长插值。
 
 use chrono::{Local, TimeZone};
 use rand::rngs::StdRng;
@@ -75,34 +75,61 @@ pub fn make_point_ring(bd_points: &[(f64, f64)]) -> PointRing {
         .iter()
         .map(|q| ((q.1 - cy) * MET_PER_DEG_LNG, (q.0 - cx) * MET_PER_DEG_LAT))
         .collect();
-    let (dense, arcs) = build_arcs(plane);
-    (dense, arcs, (cx, cy))
+    let dense = catmull_rom_ring(&plane, 18);
+    build_arcs(dense, cx, cy)
 }
 
 /// 任意闭合折线（BD 系，已按行进顺序）→ 平面稠密环 + 弧长表 + 中心。
 ///
 /// 路网规划得到的道路环直接使用本函数；与 [make_point_ring] 的区别是
-/// 不再做极角排序（顺序由路网最短路给出），也不做直线插值。
+/// 不再做极角排序（顺序由路网最短路给出），也不做 Catmull-Rom 拟合
+/// （道路顶点本身已足够稠密，拟合反而会让轨迹偏离路面）。
 pub fn make_polyline_ring(bd_polyline: Vec<(f64, f64)>, center: (f64, f64)) -> PointRing {
     let (cx, cy) = center;
     let plane: Vec<(f64, f64)> = bd_polyline
         .iter()
         .map(|q| ((q.1 - cy) * MET_PER_DEG_LNG, (q.0 - cx) * MET_PER_DEG_LAT))
         .collect();
-    let (dense, arcs) = build_arcs(plane);
-    (dense, arcs, (cx, cy))
+    build_arcs(plane, cx, cy)
 }
 
-/// 平面闭合折线 → 稠密环 + 闭合弧长表（末段回到起点）。
-fn build_arcs(plane: Vec<(f64, f64)>) -> (Vec<(f64, f64)>, Vec<f64>) {
-    let dense = plane;
+/// 平面闭合环 → 弧长表。
+fn build_arcs(mut dense: Vec<(f64, f64)>, cx: f64, cy: f64) -> PointRing {
+    dense.shrink_to_fit();
     let mut arcs = vec![0.0f64];
     for i in 1..=dense.len() {
         let a = dense[i - 1];
         let b = dense[i % dense.len()];
         arcs.push(arcs[i - 1] + ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt());
     }
-    (dense, arcs)
+    (dense, arcs, (cx, cy))
+}
+
+/// 平面闭合环 Catmull-Rom 拟合：拐角圆滑，用于稀疏打卡点环。
+///
+/// 注意会在拐角处过冲几个百分点，只适合打卡点拟合环；
+/// 路网折线环不要使用（见 [make_polyline_ring]）。
+fn catmull_rom_ring(plane: &[(f64, f64)], samples: usize) -> Vec<(f64, f64)> {
+    let n = plane.len();
+    let mut dense = Vec::with_capacity(n * samples);
+    for i in 0..n {
+        let p0 = plane[(i + n - 1) % n];
+        let p1 = plane[i];
+        let p2 = plane[(i + 1) % n];
+        let p3 = plane[(i + 2) % n];
+        for j in 0..samples {
+            let t = j as f64 / samples as f64;
+            let (t2, t3) = (t * t, t * t * t);
+            let x = 0.5 * ((2.0 * p1.0) + (-p0.0 + p2.0) * t
+                + (2.0 * p0.0 - 5.0 * p1.0 + 4.0 * p2.0 - p3.0) * t2
+                + (-p0.0 + 3.0 * p1.0 - 3.0 * p2.0 + p3.0) * t3);
+            let y = 0.5 * ((2.0 * p1.1) + (-p0.1 + p2.1) * t
+                + (2.0 * p0.1 - 5.0 * p1.1 + 4.0 * p2.1 - p3.1) * t2
+                + (-p0.1 + 3.0 * p1.1 - 3.0 * p2.1 + p3.1) * t3);
+            dense.push((x, y));
+        }
+    }
+    dense
 }
 
 /// 环线弧长 → 坐标（线性插值）。
