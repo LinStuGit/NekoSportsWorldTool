@@ -386,5 +386,6 @@ pub fn build(
         speedPerTenSec: ten_speed,
         stepsPerTenSec: ten_steps,
         segments,
+        altitude_gain_override: None,
     }
 }
