@@ -11,9 +11,21 @@ use crate::crypto::envelope::{
 use crate::crypto::header::{build_header_for, HeaderIdentity, UA_IOS};
 
 pub fn make_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
+    let mut builder = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(30));
+    // 开发环境可经 HTTPS_PROXY/ALL_PROXY 走本地代理（如 http://127.0.0.1:7897）；
+    // 未设置时行为不变。
+    let proxy_url = std::env::var("HTTPS_PROXY")
+        .or_else(|_| std::env::var("https_proxy"))
+        .or_else(|_| std::env::var("ALL_PROXY"))
+        .or_else(|_| std::env::var("all_proxy"))
+        .ok();
+    if let Some(url) = proxy_url {
+        if let Ok(proxy) = ureq::Proxy::new(url.trim()) {
+            builder = builder.proxy(proxy);
+        }
+    }
+    builder.build()
 }
 
 pub struct ApiClient {

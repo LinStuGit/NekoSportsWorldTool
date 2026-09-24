@@ -460,6 +460,59 @@ pub fn plan_road_ring(pts_bd: &[(f64, f64)], log: &mut dyn FnMut(&str)) -> Optio
 mod tests {
     use super::*;
 
+    /// 真实路网能力探测：广西职业技术大学（南宁市江南区明阳大道，
+    /// Nominatim 实测 WGS-84 中心 22.5825052, 108.2332206）。
+    /// 输出该区域路网规划能力结论（道路环 or 直线环回退），不做硬断言——
+    /// 能否规划取决于 OSM 数据覆盖，失败回退本身是预期行为。需要网络；本地运行：
+    /// `HTTPS_PROXY=http://127.0.0.1:7897 cargo test --lib --locked -- --ignored --nocapture road_plan_smoke`
+    #[test]
+    #[ignore = "需要访问 Overpass 路网"]
+    fn road_plan_smoke_guangxi_vocational_technical_university() {
+        let center = (22.5825052f64, 108.2332206f64);
+        // 模拟打卡点：校园内大体成环散布（纬度/经度偏移，度）
+        let offsets: [(f64, f64); 5] = [
+            (0.0000, 0.0000),
+            (0.0040, 0.0010),
+            (0.0020, 0.0050),
+            (-0.0030, 0.0040),
+            (-0.0020, -0.0040),
+        ];
+        let pts_bd: Vec<(f64, f64)> = offsets
+            .iter()
+            .map(|&(dla, dlo)| {
+                let (gla, glo) = wgs84_to_gcj02(center.0 + dla, center.1 + dlo);
+                gcj02_to_bd09(gla, glo)
+            })
+            .collect();
+        let mut lines = Vec::new();
+        let started = std::time::Instant::now();
+        let ring = plan_road_ring(&pts_bd, &mut |s: &str| lines.push(s.to_string()));
+        for line in &lines {
+            println!("{line}");
+        }
+        println!("耗时 {:.1}s", started.elapsed().as_secs_f32());
+        match ring {
+            Some(ring) => {
+                println!("结论：可沿真实道路规划（{} 顶点）", ring.len());
+                // 道路环下每个模拟打卡点必须被环精确命中（<2m）
+                for (i, p) in pts_bd.iter().enumerate() {
+                    let d = ring.iter().map(|q| dist_m(*p, *q)).fold(f64::INFINITY, f64::min);
+                    assert!(d < 2.0, "打卡点 {i} 距环 {d:.1}m");
+                }
+                let mut total: f64 = ring.windows(2).map(|w| dist_m(w[0], w[1])).sum();
+                if let (Some(first), Some(last)) = (ring.first(), ring.last()) {
+                    total += dist_m(*last, *first);
+                }
+                println!("环总长 {total:.0}m，平均段长 {:.1}m", total / ring.len() as f64);
+                assert!((500.0..=8000.0).contains(&total), "环长 {total:.0}m 超出校园合理范围");
+                assert!((total / ring.len() as f64) < 200.0, "平均段长过大，疑似未沿路网");
+            }
+            None => {
+                println!("结论：该区域 OSM 路网覆盖不足，已回退打卡点直线拟合环（预期行为，功能不受影响）");
+            }
+        }
+    }
+
     #[test]
     fn test_gcj_wgs_roundtrip() {
         // BD→GCJ 已有实测基线，这里验证 GCJ↔WGS 往返收敛
