@@ -1,9 +1,9 @@
 //! 自然轨迹生成器。
 //!
-//! 画像驱动：打卡点拟合闭合环（Catmull-Rom，每段 18 采样）→ 弧长表；
+//! 画像驱动：打卡点沿线段组成闭合环（每段 18 采样）→ 弧长表；
 //! 采样间隔主 5s（80%）；速度曲线 = ramp × 疲劳 × 三正弦 × 余弦凹陷 × 微噪；
-//! 正常点按速度曲线分配位移并归一到精确总距离；异常点（-1）零位移/跳变；
-//! 哨兵点（首 type∈{0,7}、索引1 type=5、末 type=6）；结尾断崖；点位吸附。
+//! 正常点按速度曲线分配位移并归一到精确总距离；所有采样点保持在跑步区域环线上，避免被服务端标成无效灰段；
+//! 哨兵点（首 type=0、索引1 type=5、末 type=6）；结尾断崖；点位吸附。
 #![allow(non_snake_case)]
 
 use super::geom::{fmt_gain_time, make_point_ring, ring_point_at, round_to, to_bd, Rng, MET_PER_DEG_LAT, MET_PER_DEG_LNG};
@@ -108,31 +108,10 @@ pub fn build(
     let seg_dist: Vec<f64> = (0..n).map(|i| w[i] * dts[i]).collect();
     let speeds: Vec<f64> = w.clone();
 
-    let tl_w = [((-1i64, 4i64), 54u32), ((-1, 1), 27), ((-1, 12), 13), ((-1, 5), 3), ((-1, 6), 2)];
-    let mut kinds: Vec<(i64, i64)> = Vec::with_capacity(n);
-    for _ in 0..n {
-        let u = rng.random();
-        if u < 0.39 {
-            kinds.push((3, 1));
-        } else if u < 0.93 {
-            kinds.push((0, 1));
-        } else if u < 0.96 {
-            kinds.push(rng.weighted(&tl_w));
-        } else {
-            kinds.push((rng.choice(&[1, 1, 1, 1, 2, 2]), 1));
-        }
-    }
-    for i in 1..kinds.len() {
-        let prev_drift = (-1 == kinds[i - 1].0) || kinds[i - 1].0 == 5 || kinds[i - 1].0 == 6;
-        if kinds[i].0 != -1 && prev_drift && rng.random() < 0.08 {
-            kinds[i] = (if rng.random() < 0.75 { 7 } else { 8 }, 1);
-        }
-    }
-    for i in 1..n {
-        if kinds[i].0 == -1 && kinds[i - 1].0 == -1 {
-            kinds[i] = (rng.choice(&[3, 0]), 1);
-        }
-    }
+    // 校园跑的有效轨迹点统一使用普通 type=0；type=5/6 只保留给起止哨兵。
+    // 混入漂移 type=-1、type=3 或 type=8 会让详情页把对应线段标成灰色。
+    let kinds: Vec<(i64, i64)> = vec![(0, 1); n];
+
     let normal_idx: Vec<usize> =
         (0..n).filter(|&i| kinds[i].0 != -1 && i > 1).collect();
     let share: f64 = normal_idx.iter().map(|&i| seg_dist[i]).sum();
@@ -176,19 +155,14 @@ pub fn build(
             let (bx, by) = pos(s);
             x = bx;
             y = by;
-            jx = 0.72 * jx + rng.gauss(0.0, 0.75);
-            jy = 0.72 * jy + rng.gauss(0.0, 0.75);
-            px = bx + jx;
-            py = by + jy;
+            // 有效点严格落在线段环上，避免随机抖动越过绿色围栏。
+            px = bx;
+            py = by;
             rad = round_to(
                 if typ == 3 { rng.uniform(1.4, 5.1) } else { rng.uniform(1.4, 2.4) },
                 2,
             );
-            state = if typ == 0 {
-                rng.weighted(&[(1, 145), (2, 45), (3, 164)])
-            } else {
-                rng.weighted(&[(1, 145), (2, 256), (3, 151)])
-            };
+            state = 1;
         } else {
             match lt {
                 4 => {
@@ -236,7 +210,7 @@ pub fn build(
             state = rng.weighted(&[(1, 102), (2, 124), (3, 136)]);
         }
         if typ != -1 {
-            dist_acc += d_step; // 异常点漂移不计入累计距离
+            dist_acc += d_step; // 轨迹点位移计入累计距离
         }
         let (lat, lng) = to_bd(px, py, c_lat, c_lng);
         alt += 0.04 * (82.0 - alt) + rng.gauss(0.0, alt_sigma);
@@ -249,8 +223,7 @@ pub fn build(
         steps_acc += cad / 60.0 * dt;
         let nxt = pos(s + direction * 2.0);
         let brg = ((nxt.0 - x).atan2(nxt.1 - y).to_degrees() + rng.gauss(0.0, 35.0)).rem_euclid(360.0);
-        // 异常点（-1）：avgSpeed 为累计均值（真人与此一致，不为 0）；
-        // GPS 瞬时速度多为低速，偶发 15-46 km/h 漂移尖峰
+        // 保留累计均值与 GPS 瞬时速度的轻微波动，但不生成越出跑步区域的漂移点。
         let (avg_sp, gps_speed) = if typ == -1 {
             let avg = round_to(dist_acc / t_acc.max(1.0), 4);
             let gps = if rng.random() < 0.12 {
@@ -310,7 +283,7 @@ pub fn build(
             bdA: round_to(alt, 2),
             bdD: round_to(brg, 2),
             bdS: round_to((avg_sp * rng.uniform(0.6, 0.95)).max(0.0), 3),
-            bdG: rng.choice(&[1, 1, 1, -1]),
+            bdG: 1,
             count: rng.randint(20, 88),
             dtr: 0.0,
             state,
