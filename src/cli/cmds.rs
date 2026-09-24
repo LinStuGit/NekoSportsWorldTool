@@ -20,6 +20,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "record-info" => cmd_record_info(&rest),
         "obs-get" => cmd_obs_get(&rest),
         "obs-sample" => cmd_obs_sample(&rest),
+        "track-preview" => cmd_track_preview(&rest),
         "ai-records" => cmd_ai_records(&rest),
         "ai-info" => cmd_ai_info(&rest),
         "semester" => cmd_semester(),
@@ -421,6 +422,103 @@ fn cmd_obs_sample(rest: &[&str]) -> i32 {
         .map_err(|e| eprintln!("写入失败: {e}"))
         .ok();
     println!("已保存 {out}");
+    0
+}
+
+/// 本地轨迹预览（不登录、不提交）：以内置校园路网规划道路环，
+/// 生成完整轨迹并输出 JSON（含路网/道路环/逐点坐标与速度），供渲染检查。
+/// 默认使用广西职业技术大学近似打卡点；`--points "lat,lng;..."` 可自定义（BD 系）。
+fn cmd_track_preview(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let dist = get(&flags, "dist").and_then(|v| v.parse::<f64>().ok()).unwrap_or(3000.0);
+    let pace = get(&flags, "pace").map(parse_pace).unwrap_or(330.0) as f64;
+    let dur = get(&flags, "dur")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or((dist / 1000.0 * pace).round() as i64);
+    let seed = get(&flags, "seed").and_then(|v| v.parse::<u64>().ok()).unwrap_or(42);
+    let out = get(&flags, "out").unwrap_or("track_preview.json").to_string();
+
+    // 广西职业技术大学校内打卡点近似位置（GCJ-02，高德 POI）→ BD 系
+    let poi_gcj: [(&str, f64, f64); 6] = [
+        ("图书馆", 108.238633, 22.579573),
+        ("学生宿舍二区", 108.237512, 22.580661),
+        ("第二食堂", 108.235879, 22.581115),
+        ("第一食堂", 108.233775, 22.579175),
+        ("体育场", 108.235303, 22.578041),
+        ("茶叶实训中心", 108.238401, 22.577899),
+    ];
+    let pts_bd: Vec<(f64, f64)> = match get(&flags, "points") {
+        Some(spec) => spec
+            .split(';')
+            .filter_map(|p| p.split_once(','))
+            .filter_map(|(a, b)| Some((a.trim().parse().ok()?, b.trim().parse().ok()?)))
+            .collect(),
+        None => poi_gcj
+            .iter()
+            .map(|&(_, glo, gla)| crate::track::roads::gcj02_to_bd09(gla, glo))
+            .collect(),
+    };
+    if pts_bd.len() < 3 {
+        eprintln!("打卡点不足 3 个");
+        return 1;
+    }
+
+    let mut log = |s: &str| eprintln!("{s}");
+    let road_ring = crate::track::roads::plan_road_ring(&pts_bd, &mut log);
+    let Some(ring) = road_ring else {
+        eprintln!("路网规划失败（打卡点不在内置校园路网范围内）");
+        return 1;
+    };
+    let cx = ring.iter().map(|p| p.0).sum::<f64>() / ring.len() as f64;
+    let cy = ring.iter().map(|p| p.1).sum::<f64>() / ring.len() as f64;
+    let start_ms = now_ms() - dur * 1000;
+    let track = crate::track::generator::build_with_ring(dist, dur, seed, (cx, cy), start_ms, &pts_bd, Some(&ring));
+
+    // 内置路网（GCJ → BD）一并输出，便于叠加渲染
+    let net: Vec<Vec<f64>> = serde_json::from_str::<serde_json::Value>(include_str!("../../assets/gxvtu_net.json"))
+        .ok()
+        .and_then(|v| v.get("nodes").and_then(|n| n.as_array()).cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|n| {
+            let arr = n.as_array()?;
+            let lo = arr.first()?.as_f64()?;
+            let la = arr.get(1)?.as_f64()?;
+            let (bla, blo) = crate::track::roads::gcj02_to_bd09(la, lo);
+            Some(vec![bla, blo])
+        })
+        .collect();
+
+    let doc = serde_json::json!({
+        "meta": {
+            "totalDistance": track.totalDistance,
+            "totalTime": track.totalTime,
+            "totalSteps": track.totalSteps,
+            "points": track.locations.len(),
+            "ringVertices": ring.len(),
+        },
+        "checkpoints": pts_bd.iter().map(|p| [p.0, p.1]).collect::<Vec<_>>(),
+        "ring": ring.iter().map(|p| [p.0, p.1]).collect::<Vec<_>>(),
+        "net": net,
+        "track": track
+            .locations
+            .iter()
+            .map(|p| serde_json::json!({
+                "lat": p.lat, "lng": p.lng,
+                "t": p.totalTime, "dis": p.totalDis,
+                "speed": p.speed, "ptype": p.ptype,
+                "alt": p.bdA,
+            }))
+            .collect::<Vec<_>>(),
+    });
+    if let Err(e) = std::fs::write(&out, serde_json::to_string(&doc).unwrap_or_default()) {
+        eprintln!("写入失败: {e}");
+        return 1;
+    }
+    println!(
+        "已保存 {out}：{:.0}m / {}s / {} 点 / 步数 {}",
+        track.totalDistance, track.totalTime, track.locations.len(), track.totalSteps
+    );
     0
 }
 
