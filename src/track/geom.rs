@@ -75,7 +75,8 @@ pub fn make_point_ring(bd_points: &[(f64, f64)]) -> PointRing {
         .iter()
         .map(|q| ((q.1 - cy) * MET_PER_DEG_LNG, (q.0 - cx) * MET_PER_DEG_LAT))
         .collect();
-    make_polyline_ring(plane, (cx, cy))
+    let (dense, arcs) = build_arcs(plane);
+    (dense, arcs, (cx, cy))
 }
 
 /// 任意闭合折线（BD 系，已按行进顺序）→ 平面稠密环 + 弧长表 + 中心。
@@ -84,17 +85,24 @@ pub fn make_point_ring(bd_points: &[(f64, f64)]) -> PointRing {
 /// 不再做极角排序（顺序由路网最短路给出），也不做直线插值。
 pub fn make_polyline_ring(bd_polyline: Vec<(f64, f64)>, center: (f64, f64)) -> PointRing {
     let (cx, cy) = center;
-    let dense: Vec<(f64, f64)> = bd_polyline
+    let plane: Vec<(f64, f64)> = bd_polyline
         .iter()
         .map(|q| ((q.1 - cy) * MET_PER_DEG_LNG, (q.0 - cx) * MET_PER_DEG_LAT))
         .collect();
+    let (dense, arcs) = build_arcs(plane);
+    (dense, arcs, (cx, cy))
+}
+
+/// 平面闭合折线 → 稠密环 + 闭合弧长表（末段回到起点）。
+fn build_arcs(plane: Vec<(f64, f64)>) -> (Vec<(f64, f64)>, Vec<f64>) {
+    let dense = plane;
     let mut arcs = vec![0.0f64];
     for i in 1..=dense.len() {
         let a = dense[i - 1];
         let b = dense[i % dense.len()];
         arcs.push(arcs[i - 1] + ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt());
     }
-    (dense, arcs, (cx, cy))
+    (dense, arcs)
 }
 
 /// 环线弧长 → 坐标（线性插值）。

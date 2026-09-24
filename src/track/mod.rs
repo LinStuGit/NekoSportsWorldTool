@@ -100,7 +100,7 @@ mod tests {
                     .sqrt()
                 })
                 .fold(f64::INFINITY, f64::min);
-            assert!(min_m < 1.0, "点位吸附失败: {min_m}m");
+assert!(min_m < 1.0, "点位吸附失败: {min_m}m");
         }
     }
 
@@ -165,10 +165,11 @@ mod tests {
         let (dense, arcs, _) = make_polyline_ring(ring, (lat0 + 100.0 / MET_PER_DEG_LAT, lng0 + 50.0 / MET_PER_DEG_LNG));
         let per = *arcs.last().unwrap();
         assert!((per - 600.0).abs() < 1.0, "周长={per}");
-        // 弧长插值：s=150m 应在上边（lat0 → lat0, lng+100）？沿行进方向：下边100+右边200…
+        // 弧长插值：s=150m 处于右边段（下边100m之后），x=+50m（相对中心），
+        // 右边段从 y=-100m 向北走到 y=+100m，故 50m 处 y=-50m
         let (x, y) = ring_point_at(&dense, &arcs, 150.0);
-        // 150m 处于右边段（100..300），x = 100m 处
-        assert!((x - 100.0).abs() < 0.5, "x={x}");
+        assert!((x - 50.0).abs() < 0.5, "x={x}");
+        assert!((y + 50.0).abs() < 0.5, "y={y}");
     }
 
     /// 10 秒窗均值配速全部落在有效窗口内（判定规则 2'21"-10'00"/km），且总距精确。

@@ -224,7 +224,7 @@ impl RoadGraph {
         let mut heap = BinaryHeap::new();
         dist[src] = 0.0;
         heap.push((std::cmp::Reverse(0u64), src));
-        while let Some((Reverse(d_cm), u)) = heap.pop() {
+        while let Some((std::cmp::Reverse(d_cm), u)) = heap.pop() {
             if u == dst {
                 break;
             }
@@ -526,26 +526,32 @@ mod tests {
 
     #[test]
     fn test_build_graph_parses_overpass_sample() {
+        // 样本需要 ≥8 节点（低于阈值会按稀疏路网拒绝）
         let body = serde_json::json!({
             "elements": [
                 { "type": "way", "id": 1, "geometry": [
-                    { "lat": 39.0, "lon": 116.0 },
-                    { "lat": 39.001, "lon": 116.0 }
+                    { "lat": 39.000, "lon": 116.000 },
+                    { "lat": 39.001, "lon": 116.000 },
+                    { "lat": 39.002, "lon": 116.000 },
+                    { "lat": 39.003, "lon": 116.000 },
+                    { "lat": 39.004, "lon": 116.000 }
                 ]},
                 { "type": "way", "id": 2, "geometry": [
-                    { "lat": 39.001, "lon": 116.0 },
-                    { "lat": 39.002, "lon": 116.001 }
+                    { "lat": 39.004, "lon": 116.000 },
+                    { "lat": 39.004, "lon": 116.001 },
+                    { "lat": 39.004, "lon": 116.002 },
+                    { "lat": 39.004, "lon": 116.003 },
+                    { "lat": 39.004, "lon": 116.004 }
                 ]},
                 { "type": "node", "id": 9, "lat": 39.0, "lon": 116.0 }
             ]
         })
         .to_string();
         let g = build_graph(&body).expect("应解析出图");
-        assert_eq!(g.coords.len(), 3, "节点去重后 3 个");
-        // 两条 way 在 (39.001,116.0) 共享节点，构成 3 节点路径
-        let (d, path) = g.route(0, 2).expect("可达");
-        assert!(d > 100.0, "d={d}");
-        assert_eq!(path, vec![0, 1, 2]);
+        assert_eq!(g.coords.len(), 9, "两条 way 共享 (39.004,116.0)，去重后 9 节点");
+        // 跨两条 way 的最短路必须经过共享节点 (39.004,116.0)
+        let (_, path) = g.route(0, 7).expect("可达");
+        assert_eq!(path, vec![0, 1, 2, 3, 4, 5, 6, 7]);
     }
 
     #[test]
