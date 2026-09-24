@@ -1,6 +1,6 @@
 //! 轨迹几何与随机工具。
 //!
-//! round 封装、RNG、打卡点线段环 + 弧长表 + 弧长插值。
+//! round 封装、RNG、打卡点线段环 + 折线环 + 弧长表 + 弧长插值。
 
 use chrono::{Local, TimeZone};
 use rand::rngs::StdRng;
@@ -75,18 +75,19 @@ pub fn make_point_ring(bd_points: &[(f64, f64)]) -> PointRing {
         .iter()
         .map(|q| ((q.1 - cy) * MET_PER_DEG_LNG, (q.0 - cx) * MET_PER_DEG_LAT))
         .collect();
-    // 只在线段 p1→p2 内插值。Catmull-Rom 会在拐角处过冲，导致
-    // 轨迹短暂越出服务端围栏，详情页随后把这些段绘成灰色。
-    let samples = 18usize;
-    let mut dense = Vec::with_capacity(n * samples);
-    for i in 0..n {
-        let p1 = plane[i];
-        let p2 = plane[(i + 1) % n];
-        for j in 0..samples {
-            let t = j as f64 / samples as f64;
-            dense.push((p1.0 + (p2.0 - p1.0) * t, p1.1 + (p2.1 - p1.1) * t));
-        }
-    }
+    make_polyline_ring(plane, (cx, cy))
+}
+
+/// 任意闭合折线（BD 系，已按行进顺序）→ 平面稠密环 + 弧长表 + 中心。
+///
+/// 路网规划得到的道路环直接使用本函数；与 [make_point_ring] 的区别是
+/// 不再做极角排序（顺序由路网最短路给出），也不做直线插值。
+pub fn make_polyline_ring(bd_polyline: Vec<(f64, f64)>, center: (f64, f64)) -> PointRing {
+    let (cx, cy) = center;
+    let dense: Vec<(f64, f64)> = bd_polyline
+        .iter()
+        .map(|q| ((q.1 - cy) * MET_PER_DEG_LNG, (q.0 - cx) * MET_PER_DEG_LAT))
+        .collect();
     let mut arcs = vec![0.0f64];
     for i in 1..=dense.len() {
         let a = dense[i - 1];

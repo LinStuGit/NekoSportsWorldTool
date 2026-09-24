@@ -6,6 +6,7 @@ pub mod geom;
 pub mod generator;
 pub mod model;
 pub mod postfix;
+pub mod roads;
 pub mod wire;
 
 #[cfg(test)]
@@ -101,6 +102,73 @@ mod tests {
                 .fold(f64::INFINITY, f64::min);
             assert!(min_m < 1.0, "点位吸附失败: {min_m}m");
         }
+    }
+
+    /// 折线环底环：矩形道路环上生成，轨迹应贴着环走且必过全部打卡点。
+    #[test]
+    fn test_build_with_road_ring() {
+        // 以打卡点为顶点的矩形闭合环（模拟路网输出的道路环，BD 系）
+        let pts = sample_points();
+        let mut ring: Vec<(f64, f64)> = Vec::new();
+        // 极角排序后按顺序连线（与道路环语义一致）
+        let order = super::roads::angular_order(&pts);
+        for &i in &order {
+            ring.push(pts[i]);
+        }
+        ring.push(pts[order[0]]);
+        // 中间加密几个点模拟道路折线
+        let mut dense_ring = Vec::new();
+        for w in ring.windows(2) {
+            for j in 0..8 {
+                let t = j as f64 / 8.0;
+                dense_ring.push((w[0].0 + (w[1].0 - w[0].0) * t, w[1].1 * t + w[0].1 * (1.0 - t)));
+            }
+        }
+        let track = super::generator::build_with_ring(
+            2600.0,
+            960,
+            11,
+            (38.9, 121.54),
+            1_788_958_186_123,
+            &pts,
+            Some(&dense_ring),
+        );
+        assert!((track.totalDistance - 2600.0).abs() < 0.5, "dist={}", track.totalDistance);
+        // 所有打卡点仍被精确命中
+        for pl in &pts {
+            let min_m = track
+                .locations
+                .iter()
+                .map(|p| {
+                    (((p.gLat - pl.0) * MET_PER_DEG_LAT).powi(2)
+                        + ((p.gLng - pl.1) * MET_PER_DEG_LNG).powi(2))
+                    .sqrt()
+                })
+                .fold(f64::INFINITY, f64::min);
+            assert!(min_m < 1.0, "道路环下点位吸附失败: {min_m}m");
+        }
+    }
+
+    /// 折线环弧长表：闭合环总弧长 = 周长，插值点严格落在线段上。
+    #[test]
+    fn test_make_polyline_ring_arcs() {
+        use super::geom::{make_polyline_ring, ring_point_at};
+        // 100m × 200m 矩形
+        let lat0 = 38.9;
+        let lng0 = 121.54;
+        let ring = vec![
+            (lat0, lng0),
+            (lat0, lng0 + 100.0 / MET_PER_DEG_LNG),
+            (lat0 + 200.0 / MET_PER_DEG_LAT, lng0 + 100.0 / MET_PER_DEG_LNG),
+            (lat0 + 200.0 / MET_PER_DEG_LAT, lng0),
+        ];
+        let (dense, arcs, _) = make_polyline_ring(ring, (lat0 + 100.0 / MET_PER_DEG_LAT, lng0 + 50.0 / MET_PER_DEG_LNG));
+        let per = *arcs.last().unwrap();
+        assert!((per - 600.0).abs() < 1.0, "周长={per}");
+        // 弧长插值：s=150m 应在上边（lat0 → lat0, lng+100）？沿行进方向：下边100+右边200…
+        let (x, y) = ring_point_at(&dense, &arcs, 150.0);
+        // 150m 处于右边段（100..300），x = 100m 处
+        assert!((x - 100.0).abs() < 0.5, "x={x}");
     }
 
     /// 10 秒窗均值配速全部落在有效窗口内（判定规则 2'21"-10'00"/km），且总距精确。

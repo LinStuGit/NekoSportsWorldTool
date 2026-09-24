@@ -6,7 +6,7 @@
 //! 哨兵点（首 type=0、索引1 type=5、末 type=6）；结尾断崖；点位吸附。
 #![allow(non_snake_case)]
 
-use super::geom::{fmt_gain_time, make_point_ring, ring_point_at, round_to, to_bd, Rng, MET_PER_DEG_LAT, MET_PER_DEG_LNG};
+use super::geom::{fmt_gain_time, make_point_ring, make_polyline_ring, ring_point_at, round_to, to_bd, Rng, MET_PER_DEG_LAT, MET_PER_DEG_LNG};
 use super::model::{GenPoint, Segment, TenWindow, Track};
 use super::postfix::apply_post_fixes;
 
@@ -41,9 +41,33 @@ pub fn build(
     start_ms: i64,
     points_bd: &[(f64, f64)],
 ) -> Track {
+    build_with_ring(dist, dur, seed, _center, start_ms, points_bd, None)
+}
+
+/// 带底环选择的轨迹生成。
+///
+/// road_ring 为路网规划输出的闭合道路环（BD 系，按行进顺序）；提供且
+/// 足够长时轨迹沿真实道路生成（不穿建筑/水面），否则回退打卡点直线
+/// 拟合环。两种底环下打卡点都会被吸附命中。
+pub fn build_with_ring(
+    dist: f64,
+    dur: i64,
+    seed: u64,
+    _center: (f64, f64),
+    start_ms: i64,
+    points_bd: &[(f64, f64)],
+    road_ring: Option<&[(f64, f64)]>,
+) -> Track {
     let mut rng = Rng::new(seed);
     let dur_f = dur as f64;
-    let (dense, arcs, pc) = make_point_ring(points_bd);
+    let (dense, arcs, pc) = match road_ring {
+        Some(ring) if ring.len() >= 8 => {
+            let cx = ring.iter().map(|q| q.0).sum::<f64>() / ring.len() as f64;
+            let cy = ring.iter().map(|q| q.1).sum::<f64>() / ring.len() as f64;
+            make_polyline_ring(ring.to_vec(), (cx, cy))
+        }
+        _ => make_point_ring(points_bd),
+    };
     let (c_lat, c_lng) = pc;
     let direction: f64 = rng.choice(&[1.0, -1.0]);
     let s0 = rng.uniform(0.0, *arcs.last().unwrap_or(&400.0));

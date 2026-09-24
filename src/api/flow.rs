@@ -7,7 +7,7 @@ use super::points;
 use super::policy::fetch_policy;
 use super::records::fetch_one_record;
 use super::submit::{submit_record, SubmitParams, SubmitResult};
-use crate::track::generator::build as gen_track;
+use crate::track::generator::build_with_ring as gen_track;
 use crate::track::wire::{build_obs_object_with_area, five_point_wrapper_with_area, obs_keys};
 use crate::location::Coordinate;
 use serde_json::Value;
@@ -118,7 +118,17 @@ pub fn run_full_flow(
     ));
     // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用
     let start_ms = params.start_ms + (rand::random::<i64>() % 5) * 1000;
-    let mut track = gen_track(params.dist, params.dur, params.seed, (anchor.latitude, anchor.longitude), start_ms, &pts_bd);
+    // 优先沿 OSM 真实路网规划闭合环（不穿建筑/水面），任一环节失败自动回退直线拟合环
+    let road_ring = crate::track::roads::plan_road_ring(&pts_bd, log);
+    let mut track = gen_track(
+        params.dist,
+        params.dur,
+        params.seed,
+        (anchor.latitude, anchor.longitude),
+        start_ms,
+        &pts_bd,
+        road_ring.as_deref(),
+    );
     if let Some(range) = params.manual_altitude_range {
         crate::track::altitude::override_bd_a_range(&mut track, range)?;
         log(&format!("√ [track] 已将海拔曲线映射到 {:.2}-{:.2}m，覆盖 {} 个点，爬升/圈数据将按覆盖值计算", range.min_m, range.max_m, track.locations.len()));

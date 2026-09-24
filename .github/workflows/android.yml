@@ -58,6 +58,12 @@ jobs:
         with:
           targets: ${{ steps.target.outputs.triple }}
 
+      - name: Run Rust tests (desktop, fail fast before packaging)
+        shell: pwsh
+        run: cargo test --lib --locked --no-default-features
+        env:
+          CARGO_INCREMENTAL: "0"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

@@ -409,7 +409,9 @@ fn cmd_obs_sample(rest: &[&str]) -> i32 {
     };
     let pts_bd = crate::api::points::points_bd(&pts);
     let start_ms = crate::crypto::envelope::now_ms() - dur * 1000;
-    let track = crate::track::generator::build(dist, dur, seed, (anchor.latitude, anchor.longitude), start_ms, &pts_bd);
+    // 优先沿 OSM 真实路网规划闭合环，失败回退直线拟合环
+    let road_ring = crate::track::roads::plan_road_ring(&pts_bd, &mut log);
+    let track = crate::track::generator::build_with_ring(dist, dur, seed, (anchor.latitude, anchor.longitude), start_ms, &pts_bd, road_ring.as_deref());
     let sess = client.login.clone().unwrap_or_default();
     let uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
     let obj = crate::track::wire::build_obs_object(&track, rrid, &uuid, sess.uid, &pts);
