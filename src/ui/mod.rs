@@ -12,6 +12,8 @@ pub mod ai;
 pub mod data;
 pub mod device;
 pub mod fonts;
+#[cfg(feature = "lite")]
+pub mod lite;
 pub mod jobs;
 pub mod msgs;
 pub mod log;
@@ -86,6 +88,9 @@ pub struct App {
     pub user_page: user::UserPage,
     pub device_page: device::DevicePage,
     pub update: about::UpdateUi,
+    /// lite 版 Material 界面壳状态（仅 lite 构建使用）。
+    #[cfg(feature = "lite")]
+    pub lite: lite::LiteUi,
 }
 
 impl eframe::App for App {
@@ -107,6 +112,22 @@ impl eframe::App for App {
         crate::platform::set_keep_screen_on(self.run_busy || self.ai_busy || self.login_busy);
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
+        #[cfg(feature = "lite")]
+        {
+            // lite 版：Material 壳（顶栏 + 底部导航 + 首页/设置/日志/关于）
+            lite::draw_app(self, ctx);
+        }
+        #[cfg(not(feature = "lite"))]
+        self.draw_full(ctx);
+
+        self.draw_shared_overlays(ctx);
+    }
+}
+
+impl App {
+    /// 标准版整帧绘制：顶栏（连接信息/登录）+ 底部状态栏 + 标签页。
+    #[cfg(not(feature = "lite"))]
+    fn draw_full(&mut self, ctx: &egui::Context) {
         // ── 顶栏 ────────────────────────────────────────────────
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.add_space(6.0);
@@ -258,28 +279,23 @@ impl eframe::App for App {
 
         // ── 标签页 ──────────────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
-            #[cfg(feature = "lite")]
-            {
-                // lite 版：仅保留跑步页
-                self.draw_run(ui);
-            }
-            #[cfg(not(feature = "lite"))]
-            {
-                mobile::tab_bar(ui, &mut self.tab);
-                ui.separator();
-                match self.tab {
-                    0 => self.draw_run(ui),
-                    1 => self.draw_ai(ui),
-                    2 => self.draw_records(ui),
-                    3 => self.draw_data(ui),
-                    4 => self.draw_user(ui),
-                    5 => self.draw_device(ui),
-                    6 => self.log.render(ui),
-                    _ => self.draw_about(ui),
-                }
+            mobile::tab_bar(ui, &mut self.tab);
+            ui.separator();
+            match self.tab {
+                0 => self.draw_run(ui),
+                1 => self.draw_ai(ui),
+                2 => self.draw_records(ui),
+                3 => self.draw_data(ui),
+                4 => self.draw_user(ui),
+                5 => self.draw_device(ui),
+                6 => self.log.render(ui),
+                _ => self.draw_about(ui),
             }
         });
+    }
 
+    /// 公共覆盖层：结果弹窗 / 更新流程窗口 / 剪贴板同步（lite 与标准版共用）。
+    fn draw_shared_overlays(&mut self, ctx: &egui::Context) {
         if let Some(p) = &self.popup {
             let mut open = true;
             let mut close = false;
@@ -433,6 +449,8 @@ impl App {
             user_page: user::UserPage::default(),
             device_page: device::DevicePage::default(),
             update: about::UpdateUi::default(),
+            #[cfg(feature = "lite")]
+            lite: lite::LiteUi::default(),
         };
         if app.font_loaded.is_none() {
             app.log.push("未找到中文字体（msyh/simhei/simsun），界面中文可能显示为方块");

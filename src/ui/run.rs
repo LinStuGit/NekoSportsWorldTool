@@ -384,7 +384,7 @@ impl App {
     }
 
     /// 开始时间相关的提示。须在 `ensure_plan()` 之后调用，才对得上本次提交时刻。
-    fn draw_run_warnings(&self, ui: &mut egui::Ui) {
+    pub(crate) fn draw_run_warnings(&self, ui: &mut egui::Ui) {
         let page = &self.run_page;
         if page.start_mode == 0 {
             if !page.random_window_ok() {
@@ -419,7 +419,7 @@ impl App {
         }
     }
 
-    fn start_run(&mut self) {
+    pub(crate) fn start_run(&mut self) {
         // 参数变更时补齐方案；提交直接使用预计算值
         self.run_page.ensure_plan();
         let page = &mut self.run_page;
