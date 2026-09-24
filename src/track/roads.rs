@@ -115,7 +115,7 @@ pub fn gcj02_to_bd09(glat: f64, glng: f64) -> (f64, f64) {
 // ---------------------------------------------------------------------------
 
 /// 等距近似两点距离（米）。与生成器共用同一组每度米数常量，保持一致性。
-fn dist_m(a: (f64, f64), b: (f64, f64)) -> f64 {
+pub(crate) fn dist_m(a: (f64, f64), b: (f64, f64)) -> f64 {
     let dy = (a.0 - b.0) * MET_PER_DEG_LAT;
     let dx = (a.1 - b.1) * MET_PER_DEG_LNG;
     (dx * dx + dy * dy).sqrt()
@@ -135,7 +135,7 @@ pub fn angular_order(pts: &[(f64, f64)]) -> Vec<usize> {
     order
 }
 
-fn fnv1a(s: &str) -> u64 {
+pub(crate) fn fnv1a(s: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.bytes() {
         h ^= b as u64;

@@ -109,6 +109,14 @@ fn cmd_run(rest: &[&str]) -> i32 {
     };
     let seed: u64 = get(&flags, "seed").and_then(|v| v.parse().ok()).unwrap_or(0);
     let seed = if seed == 0 { (now_ms() % 2_147_483_647) as u64 } else { seed };
+    // 高德路线 Key：命令行优先，其次 config.json 里的 amap_key
+    let amap_key = get(&flags, "amap-key")
+        .map(str::to_string)
+        .or_else(|| {
+            let key = model::load_config().amap_key;
+            (!key.trim().is_empty()).then_some(key)
+        })
+        .unwrap_or_default();
 
     let dist = if dist_km > 0.0 {
         dist_km as f64 * 1000.0
@@ -144,7 +152,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
     );
 
     let mut log = logger();
-    let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check: face as i64, manual_altitude, manual_altitude_range, seed };
+    let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check: face as i64, manual_altitude, manual_altitude_range, seed, amap_key };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {
             println!(

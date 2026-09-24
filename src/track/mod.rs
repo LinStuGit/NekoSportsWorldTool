@@ -2,6 +2,7 @@
 
 pub mod calorie;
 pub mod altitude;
+pub mod amap;
 pub mod geom;
 pub mod generator;
 pub mod model;

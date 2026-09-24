@@ -335,6 +335,19 @@ impl App {
             });
         }
 
+        // 路线数据源：高德步行路网（可选）。OSM 没画校园道路时（轨迹
+        // 回退直线环），填入高德 Key 可沿真实道路规划。
+        mobile::row(ui, |ui| {
+            ui.label("高德路线Key：");
+            let width = if mobile::compact_ui(ui) { ui.available_width() } else { 220.0 };
+            mobile::text_edit(ui, "amap_key", &mut self.config.amap_key, crate::platform::InputKind::Text, width);
+            if self.config.amap_key.trim().is_empty() {
+                ui.label(egui::RichText::new("（空=OSM）").color(theme::text_dim()).small());
+            } else {
+                ui.label(egui::RichText::new("高德步行路网").color(theme::ok()).small());
+            }
+        });
+
         ui.add_space(8.0);
         let fmt_pace = |s: f32| format!("{}:{:02}", (s / 60.0) as i64, (s as i64) % 60);
         let fmt_dur = |s: i64| {
@@ -448,6 +461,7 @@ impl App {
         self.config.face_check = page.face_check;
         self.config.manual_altitude = None;
         self.config.manual_altitude_range = manual_altitude_range;
+        // amap_key 在输入时即已写入 self.config，此处随参数一并持久化
         let _ = crate::api::model::save_config(&self.config);
 
         let identity = self.identity.clone();
@@ -460,11 +474,12 @@ impl App {
         };
         self.run_busy = true;
         self.status = "跑步提交中…".into();
+        let amap_key = self.config.amap_key.clone();
         self.spawn_job(move |tx| {
             let mut log = App::logger(tx.clone());
             let seed = (crate::crypto::envelope::now_ms() % 2_147_483_647) as u64;
             let mut client = crate::api::client::ApiClient::new(identity, Some(session));
-            let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check, manual_altitude, manual_altitude_range, seed };
+            let params = crate::api::flow::RunParams { dist, dur, start_ms, face_check, manual_altitude, manual_altitude_range, seed, amap_key };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {
                     log(&format!(

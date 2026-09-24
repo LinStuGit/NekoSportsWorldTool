@@ -74,6 +74,10 @@ pub struct Config {
     /// 启动时检查更新：silent（静默，发现新版才弹窗）/ ask（每次询问）/ off
     #[serde(default = "default_update_check")]
     pub update_check: String,
+    /// 高德 Web 服务 Key（可选）：填写后跑步路线优先沿高德步行路网规划，
+    /// 适合 OSM 未绘制校园道路的学校；为空使用 OSM。
+    #[serde(default)]
+    pub amap_key: String,
 }
 
 fn default_f32() -> f32 {
@@ -111,6 +115,7 @@ impl Default for Config {
             ai_minutes: default_ai_minutes(),
             ai_reps: default_ai_reps(),
             update_check: default_update_check(),
+            amap_key: String::new(),
         }
     }
 }
