@@ -60,7 +60,8 @@ pub fn run_full_flow(
         return Err("请先在设备信息页填写本次跑步所在城市和定位锚点，不能使用大连默认配置".into());
     }
     let anchor: Coordinate = client.identity.anchor_coordinate()?;
-    let mut points_ctx = points::fetch_points_context(client, anchor, log)?;
+    let requested_area_id = (pol.area.run_area_id >= 0).then(|| pol.area.run_area_id.to_string());
+    let mut points_ctx = points::fetch_points_context_ext(client, anchor, requested_area_id, log)?;
     // 校园围栏可能随 runModePolicy 返回，而点位接口只给打卡点。
     // 优先保留策略中的真实区域；仅当策略缺失时使用点位中的区域。
     if pol.area.run_area_id >= 0 { points_ctx.area.run_area_id = pol.area.run_area_id; }
