@@ -25,8 +25,6 @@ pub struct RunParams {
     /// 用户手动填写的海拔范围；与单值字段兼容，范围优先。
     pub manual_altitude_range: Option<crate::track::altitude::AltitudeRange>,
     pub seed: u64,
-    /// 高德 Web 服务 Key（可选）：非空时优先沿高德步行路网规划路线。
-    pub amap_key: String,
 }
 
 pub struct RunOutcome {
@@ -120,15 +118,9 @@ pub fn run_full_flow(
     ));
     // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用
     let start_ms = params.start_ms + (rand::random::<i64>() % 5) * 1000;
-    // 优先沿真实路网规划闭合环（不穿建筑/水面）：高德步行路网（填了 Key 时，
-    // 对 OSM 未绘制校园道路的学校覆盖更好）→ OSM/Overpass → 任一环节失败
-    // 自动回退打卡点直线拟合环
-    let road_ring = if params.amap_key.trim().is_empty() {
-        crate::track::roads::plan_road_ring(&pts_bd, log)
-    } else {
-        crate::track::amap::plan_amap_ring(&pts_bd, params.amap_key.trim(), log)
-            .or_else(|| crate::track::roads::plan_road_ring(&pts_bd, log))
-    };
+    // 优先沿内置校园路网规划闭合环（不穿建筑/水面，无任何路网 API 调用）；
+    // 打卡点接不进内置路网时自动回退打卡点直线拟合环
+    let road_ring = crate::track::roads::plan_road_ring(&pts_bd, log);
     let mut track = gen_track(
         params.dist,
         params.dur,

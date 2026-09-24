@@ -1,18 +1,19 @@
-//! 真实路网环线规划（避免轨迹直线穿越建筑与水面）。
+//! 校园内置离线路网环线规划（避免轨迹直线穿越建筑与水面）。
 //!
-//! 直线拟合环假设相邻打卡点之间无遮挡；本模块改为沿 OpenStreetMap
-//! 真实路网连接打卡点：Overpass API 拉取打卡点包围盒内的道路/步道
-//! 要素（`out geom`），构图后用 Dijkstra 规划相邻打卡点间最短路径，
-//! 拼接为闭合道路环。道路本身不会穿过建筑与湖泊，且打卡点作为图
-//! 节点参与规划，保证轨迹仍精确经过全部打卡点。
+//! 软件仅支持广西职业技术大学（南宁市江南区明阳大道19号），其校园
+//! 步行路网已离线采集并内嵌为 [assets/gxvtu_net.json]（GCJ-02 坐标，
+//! 297 节点 / 397 边，采集自高德步行路径规划，主连通分量 + 共线简化）。
+//! 规划时把打卡点注册为图节点，沿内置路网用 Dijkstra 连接相邻打卡点，
+//! 拼接为闭合道路环——道路本身不会穿过建筑与湖泊。
 //!
-//! 任何一步失败都返回 `None`，由调用方回退到直线拟合环；
-//! 路网响应按包围盒落盘缓存 7 天，避免重复请求触发限流。
+//! 正式软件不做任何路网 API 调用（无 Overpass / 无高德请求）。
+//! 打卡点超出内置路网贴靠范围或不可达时返回 `None`，由调用方回退到
+//! 直线拟合环。
 
 use std::collections::{BinaryHeap, HashMap};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::geom::{MET_PER_DEG_LAT, MET_PER_DEG_LNG};
+use super::geom::MET_PER_DEG_LAT;
+use super::geom::MET_PER_DEG_LNG;
 use super::wire::bd09_to_gcj02;
 
 const X_PI: f64 = std::f64::consts::PI * 3000.0 / 180.0;
@@ -20,21 +21,15 @@ const X_PI: f64 = std::f64::consts::PI * 3000.0 / 180.0;
 const SEMI_MAJOR: f64 = 6_378_245.0;
 const EE: f64 = 0.006_693_421_622_965_943_23;
 
-const OVERPASS_ENDPOINTS: [&str; 2] = [
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass-api.de/api/interpreter",
-];
-
 /// 打卡点到路网节点的最大直线连接距离（米）。
 const SNAP_MAX_M: f64 = 300.0;
 /// 每个打卡点最多连接的最近路网节点数。
 const SNAP_K: usize = 4;
-/// 路网缓存有效期（秒）。
-const CACHE_TTL: u64 = 7 * 24 * 3600;
-/// 包围盒外扩（米）。
-const BBOX_MARGIN_M: f64 = 250.0;
 /// 道路环的最短长度（米），低于该值视为路网覆盖不足。
 const MIN_RING_M: f64 = 300.0;
+
+/// 内嵌校园路网（GCJ-02，[lng, lat] 节点 + 节点对边表）。
+const CAMPUS_NET_JSON: &str = include_str!("../../assets/gxvtu_net.json");
 
 // ---------------------------------------------------------------------------
 // 坐标变换
@@ -59,7 +54,7 @@ fn transform_lng(x: f64, y: f64) -> f64 {
     let mut ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * x.abs().sqrt();
     ret += (20.0 * (6.0 * x * std::f64::consts::PI).sin() + 20.0 * (2.0 * x * std::f64::consts::PI).sin()) * 2.0 / 3.0;
     ret += (x * std::f64::consts::PI).sin() * 20.0 / 3.0
-        + (2.0 * (x / 3.0) * std::f64::consts::PI).sin() * 20.0 / 3.0;
+        + (x / 3.0 * std::f64::consts::PI).sin() * 20.0 / 3.0;
     ret += (x / 12.0 * std::f64::consts::PI).cos() * 150.0 / 3.0
         + (x / 30.0 * std::f64::consts::PI).cos() * 18.0 / 3.0;
     ret
@@ -135,21 +130,12 @@ pub fn angular_order(pts: &[(f64, f64)]) -> Vec<usize> {
     order
 }
 
-pub(crate) fn fnv1a(s: &str) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in s.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
-}
-
 // ---------------------------------------------------------------------------
 // 路网图
 // ---------------------------------------------------------------------------
 
 struct RoadGraph {
-    /// 节点坐标 WGS (lat, lng)。
+    /// 节点坐标 GCJ (lat, lng)。
     coords: Vec<(f64, f64)>,
     adj: Vec<Vec<(usize, f64)>>,
     key_of: HashMap<(i64, i64), usize>,
@@ -254,31 +240,26 @@ impl RoadGraph {
     }
 }
 
-/// 从 Overpass 响应 JSON 构建路网图。
+/// 解析内嵌校园路网 JSON（GCJ-02）为图。
 fn build_graph(body: &str) -> Option<RoadGraph> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
-    let elements = v.get("elements")?.as_array()?;
+    let nodes = v.get("nodes")?.as_array()?;
+    let edges = v.get("edges")?.as_array()?;
     let mut graph = RoadGraph::new();
-    for way in elements {
-        if way.get("type").and_then(|t| t.as_str()) != Some("way") {
-            continue;
+    for n in nodes {
+        let pair = n.as_array()?;
+        let lng = pair.first()?.as_f64()?;
+        let lat = pair.get(1)?.as_f64()?;
+        graph.node((lat, lng));
+    }
+    for e in edges {
+        let pair = e.as_array()?;
+        let a = pair.first()?.as_u64()? as usize;
+        let b = pair.get(1)?.as_u64()? as usize;
+        if a >= graph.coords.len() || b >= graph.coords.len() {
+            return None;
         }
-        // 缺 geometry 的要素直接跳过，不能中止整个建图流程
-        let geometry = match way.get("geometry").and_then(|g| g.as_array()) {
-            Some(g) if !g.is_empty() => g,
-            _ => continue,
-        };
-        let nodes: Vec<usize> = geometry
-            .iter()
-            .filter_map(|pt| {
-                let la = pt.get("lat")?.as_f64()?;
-                let lo = pt.get("lon")?.as_f64()?;
-                Some(graph.node((la, lo)))
-            })
-            .collect();
-        for w in nodes.windows(2) {
-            graph.edge(w[0], w[1]);
-        }
+        graph.edge(a, b);
     }
     // 路网过稀（<8 节点）没有规划价值，直接回退直线环。
     if graph.coords.len() < 8 {
@@ -288,128 +269,42 @@ fn build_graph(body: &str) -> Option<RoadGraph> {
 }
 
 // ---------------------------------------------------------------------------
-// Overpass 请求与缓存
-// ---------------------------------------------------------------------------
-
-/// Overpass 查询：包围盒内除快速路外的全部道路/步道要素。
-fn overpass_query(bbox: (f64, f64, f64, f64)) -> String {
-    format!(
-        "[out:json][timeout:25];(way[\"highway\"][\"highway\"!~\"^(motorway|trunk|motorway_link|trunk_link|construction|proposed|raceway)$\"]({},{},{},{}););out geom;",
-        bbox.0, bbox.1, bbox.2, bbox.3
-    )
-}
-
-fn cache_path(bbox: (f64, f64, f64, f64)) -> std::path::PathBuf {
-    let key = format!("{:.6},{:.6},{:.6},{:.6}", bbox.0, bbox.1, bbox.2, bbox.3);
-    crate::platform::data_dir().join(format!("roadnet-{:016x}.json", fnv1a(&key)))
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// 读缓存（7 天有效）。
-fn read_cache(bbox: (f64, f64, f64, f64)) -> Option<String> {
-    let path = cache_path(bbox);
-    let raw = std::fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let saved = v.get("saved")?.as_u64()?;
-    if now_secs().saturating_sub(saved) > CACHE_TTL {
-        return None;
-    }
-    let body = v.get("body")?.as_str()?.to_string();
-    if body.is_empty() {
-        return None;
-    }
-    Some(body)
-}
-
-fn write_cache(bbox: (f64, f64, f64, f64), body: &str) {
-    let v = serde_json::json!({ "saved": now_secs(), "body": body });
-    let _ = std::fs::write(cache_path(bbox), v.to_string());
-}
-
-/// 依次尝试多个 Overpass 镜像拉取路网；成功响应写入缓存。
-fn fetch_overpass(bbox: (f64, f64, f64, f64), log: &mut dyn FnMut(&str)) -> Option<String> {
-    if let Some(cached) = read_cache(bbox) {
-        log("√ [roads] 命中路网缓存");
-        return Some(cached);
-    }
-    let query = overpass_query(bbox);
-    let agent = crate::api::client::make_agent();
-    for url in OVERPASS_ENDPOINTS {
-        log(&format!("[roads] 请求 Overpass 路网 {url} …"));
-        let result = agent
-            .post(url)
-            .timeout(std::time::Duration::from_secs(40))
-            .set("Content-Type", "text/plain")
-            .send_string(&query);
-        match result {
-            Ok(resp) => match resp.into_string() {
-                Ok(body) if !body.is_empty() => {
-                    write_cache(bbox, &body);
-                    log("√ [roads] 路网拉取成功（已缓存 7 天）");
-                    return Some(body);
-                }
-                Ok(_) => log("[roads] Overpass 返回空响应"),
-                Err(e) => log(&format!("[roads] 读取响应失败：{e}")),
-            },
-            Err(e) => log(&format!("[roads] 请求失败：{e}")),
-        }
-    }
-    None
-}
-
-// ---------------------------------------------------------------------------
 // 主入口
 // ---------------------------------------------------------------------------
 
-/// 规划沿真实路网的闭合环线（BD 系坐标）。
+/// 规划沿内置校园路网的闭合环线（BD 系坐标）。
 ///
 /// 输入为打卡点 BD 坐标；输出为稠密闭合环，可直接交给
 /// [super::geom::make_polyline_ring] 作为轨迹底环。
-/// 打卡点稀少、路网不可达或覆盖不足时返回 None。
+/// 打卡点稀少、超出路网贴靠范围或不可达时返回 None。
 pub fn plan_road_ring(pts_bd: &[(f64, f64)], log: &mut dyn FnMut(&str)) -> Option<Vec<(f64, f64)>> {
     if pts_bd.len() < 3 {
         return None;
     }
-    // ① BD → GCJ → WGS（OSM 使用 WGS-84）
-    let wgs: Vec<(f64, f64)> = pts_bd
-        .iter()
-        .map(|&(la, lo)| {
-            let (gla, glo) = bd09_to_gcj02(la, lo);
-            gcj02_to_wgs84(gla, glo)
-        })
-        .collect();
+    // ① BD → GCJ（内置路网为 GCJ-02 坐标）
+    let gcj: Vec<(f64, f64)> = pts_bd.iter().map(|&(la, lo)| bd09_to_gcj02(la, lo)).collect();
     // ② 打卡点按极角排序（与直线环同序，保证打卡顺序一致）
-    let order = angular_order(&wgs);
-    let wgs: Vec<(f64, f64)> = order.iter().map(|&i| wgs[i]).collect();
-    // ③ 包围盒（外扩 BBOX_MARGIN_M）
-    let (min_lat, max_lat) = wgs.iter().fold((f64::MAX, f64::MIN), |acc, p| (acc.0.min(p.0), acc.1.max(p.0)));
-    let (min_lng, max_lng) = wgs.iter().fold((f64::MAX, f64::MIN), |acc, p| (acc.0.min(p.1), acc.1.max(p.1)));
-    let mlat = BBOX_MARGIN_M / MET_PER_DEG_LAT;
-    let mlng = BBOX_MARGIN_M / MET_PER_DEG_LNG;
-    let bbox = (min_lat - mlat, min_lng - mlng, max_lat + mlat, max_lng + mlng);
-    // ④ 缓存/请求路网
-    let body = fetch_overpass(bbox, log)?;
-    // ⑤ 建图 + 打卡点入图
-    let mut graph = build_graph(&body)?;
-    log(&format!("√ [roads] 路网 {} 节点", graph.coords.len()));
-    let mut nodes = Vec::with_capacity(wgs.len());
-    for &p in &wgs {
+    let order = angular_order(&gcj);
+    let gcj: Vec<(f64, f64)> = order.iter().map(|&i| gcj[i]).collect();
+    // ③ 解析内置路网 + 打卡点入图
+    let mut graph = build_graph(CAMPUS_NET_JSON)?;
+    log(&format!(
+        "√ [roads] 内置校园路网 {} 节点 / {} 边",
+        graph.coords.len(),
+        graph.adj.iter().map(|a| a.len()).sum::<usize>() / 2
+    ));
+    let mut nodes = Vec::with_capacity(gcj.len());
+    for &p in &gcj {
         match graph.attach_checkpoint(p) {
             Some(n) => nodes.push(n),
             None => {
-                log("[roads] 存在超过 300m 无法接入路网的打卡点，回退直线环");
+                log("[roads] 存在超过 300m 无法接入校园路网的打卡点，回退直线环");
                 return None;
             }
         }
     }
-    // ⑥ 相邻打卡点间最短路拼接闭合环
-    let mut ring_wgs: Vec<(f64, f64)> = Vec::new();
+    // ④ 相邻打卡点间最短路拼接闭合环
+    let mut ring_gcj: Vec<(f64, f64)> = Vec::new();
     let mut total = 0.0f64;
     for i in 0..nodes.len() {
         let a = nodes[i];
@@ -419,37 +314,29 @@ pub fn plan_road_ring(pts_bd: &[(f64, f64)], log: &mut dyn FnMut(&str)) -> Optio
         for &n in &path {
             let p = graph.coords[n];
             // 相邻段共享打卡点端点，靠距离去重
-            if let Some(&q) = ring_wgs.last() {
+            if let Some(&q) = ring_gcj.last() {
                 if dist_m(q, p) < 0.05 {
                     continue;
                 }
             }
-            ring_wgs.push(p);
+            ring_gcj.push(p);
         }
     }
     // 首尾闭合：去掉与起点重复的收尾点
-    while ring_wgs.len() > 2 && dist_m(ring_wgs[0], *ring_wgs.last().unwrap()) < 0.05 {
-        ring_wgs.pop();
+    while ring_gcj.len() > 2 && dist_m(ring_gcj[0], *ring_gcj.last().unwrap()) < 0.05 {
+        ring_gcj.pop();
     }
-    if total < MIN_RING_M || ring_wgs.len() < 8 {
-        log(&format!("[roads] 道路环过短（{total:.0}m / {} 点），回退直线环", ring_wgs.len()));
+    if total < MIN_RING_M || ring_gcj.len() < 8 {
+        log(&format!("[roads] 道路环过短（{total:.0}m / {} 点），回退直线环", ring_gcj.len()));
         return None;
     }
     log(&format!(
-        "√ [roads] 道路环 {:.0}m / {} 顶点，轨迹将沿真实道路生成",
+        "√ [roads] 道路环 {:.0}m / {} 顶点，轨迹将沿校园真实道路生成",
         total,
-        ring_wgs.len()
+        ring_gcj.len()
     ));
-    // ⑦ WGS → GCJ → BD
-    Some(
-        ring_wgs
-            .iter()
-            .map(|&(la, lo)| {
-                let (gla, glo) = wgs84_to_gcj02(la, lo);
-                gcj02_to_bd09(gla, glo)
-            })
-            .collect(),
-    )
+    // ⑤ GCJ → BD
+    Some(ring_gcj.iter().map(|&(la, lo)| gcj02_to_bd09(la, lo)).collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -460,57 +347,74 @@ pub fn plan_road_ring(pts_bd: &[(f64, f64)], log: &mut dyn FnMut(&str)) -> Optio
 mod tests {
     use super::*;
 
-    /// 真实路网能力探测：广西职业技术大学（南宁市江南区明阳大道，
-    /// Nominatim 实测 WGS-84 中心 22.5825052, 108.2332206）。
-    /// 输出该区域路网规划能力结论（道路环 or 直线环回退），不做硬断言——
-    /// 能否规划取决于 OSM 数据覆盖，失败回退本身是预期行为。需要网络；本地运行：
-    /// `HTTPS_PROXY=http://127.0.0.1:7897 cargo test --lib --locked -- --ignored --nocapture road_plan_smoke`
+    /// 校园真实打卡点近似位置（GCJ-02，高德 POI）。
+    const POIS_GCJ: [(&str, f64, f64); 6] = [
+        ("图书馆", 108.238633, 22.579573),
+        ("学生宿舍二区", 108.237512, 22.580661),
+        ("第一食堂", 108.233775, 22.579175),
+        ("体育场", 108.235303, 22.578041),
+        ("茶叶实训中心", 108.238401, 22.577899),
+        ("第二食堂", 108.235879, 22.581115),
+    ];
+
+    /// 内置路网解析：节点/边规模与坐标范围必须落在校园内。
     #[test]
-    #[ignore = "需要访问 Overpass 路网"]
-    fn road_plan_smoke_guangxi_vocational_technical_university() {
-        let center = (22.5825052f64, 108.2332206f64);
-        // 模拟打卡点：校园内大体成环散布（纬度/经度偏移，度）
-        let offsets: [(f64, f64); 5] = [
-            (0.0000, 0.0000),
-            (0.0040, 0.0010),
-            (0.0020, 0.0050),
-            (-0.0030, 0.0040),
-            (-0.0020, -0.0040),
-        ];
-        let pts_bd: Vec<(f64, f64)> = offsets
+    fn test_embedded_campus_network() {
+        let g = build_graph(CAMPUS_NET_JSON).expect("内置路网应可解析");
+        assert!(g.coords.len() >= 200, "节点数 {}", g.coords.len());
+        let edges: usize = g.adj.iter().map(|a| a.len()).sum::<usize>() / 2;
+        assert!(edges >= 200, "边数 {edges}");
+        // 校园范围（GCJ-02）：lng 108.232~108.241, lat 22.575~22.582
+        for &(la, lo) in &g.coords {
+            assert!((108.232..=108.241).contains(&lo), "lng {lo}");
+            assert!((22.575..=22.582).contains(&la), "lat {la}");
+        }
+    }
+
+    /// 离线全链：广西职业技术大学打卡点必须能规划出沿校园道路的闭合环。
+    /// 纯本地计算，无网络。
+    #[test]
+    fn test_plan_ring_guangxi_vocational_technical_university() {
+        // POI 的 GCJ 坐标转 BD 后模拟服务端下发的打卡点
+        let pts_bd: Vec<(f64, f64)> = POIS_GCJ
             .iter()
-            .map(|&(dla, dlo)| {
-                let (gla, glo) = wgs84_to_gcj02(center.0 + dla, center.1 + dlo);
-                gcj02_to_bd09(gla, glo)
+            .map(|&(_, lo, la)| {
+                let (bla, blo) = gcj02_to_bd09(la, lo);
+                (bla, blo)
             })
             .collect();
         let mut lines = Vec::new();
-        let started = std::time::Instant::now();
         let ring = plan_road_ring(&pts_bd, &mut |s: &str| lines.push(s.to_string()));
         for line in &lines {
             println!("{line}");
         }
-        println!("耗时 {:.1}s", started.elapsed().as_secs_f32());
-        match ring {
-            Some(ring) => {
-                println!("结论：可沿真实道路规划（{} 顶点）", ring.len());
-                // 道路环下每个模拟打卡点必须被环精确命中（<2m）
-                for (i, p) in pts_bd.iter().enumerate() {
-                    let d = ring.iter().map(|q| dist_m(*p, *q)).fold(f64::INFINITY, f64::min);
-                    assert!(d < 2.0, "打卡点 {i} 距环 {d:.1}m");
-                }
-                let mut total: f64 = ring.windows(2).map(|w| dist_m(w[0], w[1])).sum();
-                if let (Some(first), Some(last)) = (ring.first(), ring.last()) {
-                    total += dist_m(*last, *first);
-                }
-                println!("环总长 {total:.0}m，平均段长 {:.1}m", total / ring.len() as f64);
-                assert!((500.0..=8000.0).contains(&total), "环长 {total:.0}m 超出校园合理范围");
-                assert!((total / ring.len() as f64) < 200.0, "平均段长过大，疑似未沿路网");
-            }
-            None => {
-                println!("结论：该区域 OSM 路网覆盖不足，已回退打卡点直线拟合环（预期行为，功能不受影响）");
-            }
+        let ring = ring.expect("校内打卡点应能沿内置路网规划道路环");
+        // 每个打卡点必须被环精确命中（坐标往返误差 < 2m）
+        for (i, p) in pts_bd.iter().enumerate() {
+            let d = ring.iter().map(|q| dist_m(*p, *q)).fold(f64::INFINITY, f64::min);
+            assert!(d < 2.0, "打卡点 {i} 距环 {d:.1}m");
         }
+        let mut total: f64 = ring.windows(2).map(|w| dist_m(w[0], w[1])).sum();
+        if let (Some(first), Some(last)) = (ring.first(), ring.last()) {
+            total += dist_m(*last, *first);
+        }
+        println!("环总长 {total:.0}m，平均段长 {:.1}m", total / ring.len() as f64);
+        assert!((500.0..=6000.0).contains(&total), "环长 {total:.0}m 超出校园合理范围");
+        assert!((total / ring.len() as f64) < 120.0, "平均段长过大，疑似未沿路网");
+    }
+
+    /// 非 GXVTU 的打卡点（如大连某校园）接不进内置路网，必须回退直线环。
+    #[test]
+    fn test_plan_ring_rejects_off_campus_points() {
+        let pts = vec![
+            (38.901678, 121.540241),
+            (38.902564, 121.541233),
+            (38.900921, 121.542310),
+        ];
+        let mut lines = Vec::new();
+        let ring = plan_road_ring(&pts, &mut |s: &str| lines.push(s.to_string()));
+        assert!(ring.is_none(), "校外打卡点不应接入校园路网");
+        assert!(lines.iter().any(|l| l.contains("回退直线环")));
     }
 
     #[test]
@@ -575,57 +479,5 @@ mod tests {
         let (d2, path2) = g.route(a, b).expect("绕行可达");
         assert_eq!(path2[1], c, "应绕行 C");
         assert!(d2 > d, "绕行更远：d2={d2} d={d}");
-    }
-
-    #[test]
-    fn test_build_graph_parses_overpass_sample() {
-        // 样本需要 ≥8 节点（低于阈值会按稀疏路网拒绝）
-        let body = serde_json::json!({
-            "elements": [
-                { "type": "way", "id": 1, "geometry": [
-                    { "lat": 39.000, "lon": 116.000 },
-                    { "lat": 39.001, "lon": 116.000 },
-                    { "lat": 39.002, "lon": 116.000 },
-                    { "lat": 39.003, "lon": 116.000 },
-                    { "lat": 39.004, "lon": 116.000 }
-                ]},
-                { "type": "way", "id": 2, "geometry": [
-                    { "lat": 39.004, "lon": 116.000 },
-                    { "lat": 39.004, "lon": 116.001 },
-                    { "lat": 39.004, "lon": 116.002 },
-                    { "lat": 39.004, "lon": 116.003 },
-                    { "lat": 39.004, "lon": 116.004 }
-                ]},
-                { "type": "node", "id": 9, "lat": 39.0, "lon": 116.0 }
-            ]
-        })
-        .to_string();
-        let g = build_graph(&body).expect("应解析出图");
-        assert_eq!(g.coords.len(), 9, "两条 way 共享 (39.004,116.0)，去重后 9 节点");
-        // 跨两条 way 的最短路必须经过共享节点 (39.004,116.0)
-        let (_, path) = g.route(0, 7).expect("可达");
-        assert_eq!(path, vec![0, 1, 2, 3, 4, 5, 6, 7]);
-    }
-
-    #[test]
-    fn test_build_graph_rejects_sparse() {
-        let body = serde_json::json!({
-            "elements": [
-                { "type": "way", "id": 1, "geometry": [
-                    { "lat": 39.0, "lon": 116.0 },
-                    { "lat": 39.001, "lon": 116.0 }
-                ]}
-            ]
-        })
-        .to_string();
-        assert!(build_graph(&body).is_none(), "2 节点路网应回退直线环");
-    }
-
-    #[test]
-    fn test_overpass_query_contains_bbox() {
-        let q = overpass_query((38.895, 121.533, 38.905, 121.545));
-        assert!(q.contains("(38.895,121.533,38.905,121.545)"));
-        assert!(q.contains("out geom"));
-        assert!(q.contains("motorway"));
     }
 }
