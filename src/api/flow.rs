@@ -60,12 +60,25 @@ pub fn run_full_flow(
         return Err("请先在设备信息页填写本次跑步所在城市和定位锚点，不能使用大连默认配置".into());
     }
     let anchor: Coordinate = client.identity.anchor_coordinate()?;
-    let points_ctx = points::fetch_points_context(client, anchor, log)?;
+    let mut points_ctx = points::fetch_points_context(client, anchor, log)?;
+    // 校园围栏可能随 runModePolicy 返回，而点位接口只给打卡点。
+    // 优先保留策略中的真实区域；仅当策略缺失时使用点位中的区域。
+    if pol.area.run_area_id >= 0 { points_ctx.area.run_area_id = pol.area.run_area_id; }
+    if pol.area.geo_fences_json.trim() != "[]" {
+        points_ctx.area.geo_fences_json = pol.area.geo_fences_json.clone();
+        points_ctx.area.freedom_show_fence = pol.area.freedom_show_fence;
+    }
     let pts = points_ctx.points.clone();
     if pts.is_empty() {
         return Err("实时点位为空 —— 拒绝本地样本兜底".into());
     }
-    log(&format!("√ [points] {} 个点位", pts.len()));
+    log(&format!(
+        "√ [points] {} 个点位，runAreaId={}，绿色围栏={}（{} 字节）",
+        pts.len(),
+        points_ctx.area.run_area_id,
+        points_ctx.area.freedom_show_fence,
+        points_ctx.area.geo_fences_json.len(),
+    ));
     for p in pts.iter().take(5) {
         log(&format!(
             "  [points] {} BD=({:.6},{:.6}) GCJ=({},{})",

@@ -72,6 +72,9 @@ pub struct Track {
     pub speedPerTenSec: Vec<TenWindow>,
     pub stepsPerTenSec: Vec<TenWindow>,
     pub segments: Vec<Segment>,
+    /// 用户指定海拔范围时提交协议使用的目标累计爬升；自动海拔时为空。
+    #[serde(skip)]
+    pub altitude_gain_override: Option<f64>,
 }
 
 impl Track {
@@ -96,7 +99,7 @@ mod tests {
     use super::*;
     fn sample_track() -> Track {
         let point = GenPoint { id: 1, flag: 1, lat: -1.0, lng: -1.0, gLat: 39.9, gLng: 116.4, speed: 1.0, avgSpeed: 1.0, radius: 3.0, accuracy: 3.0, ptype: 0, locType: 1, hasAltitude: true, totalTime: 1, totalDis: 1.0, validDis: 1.0, validTime: 1, steps: 1, stepDistance: 0.0, gainTime: String::new(), gainTimeMs: 1, queueNum: 0, coorType: "gcj02".into(), bdA: 1.0, bdD: 0.0, bdS: 1.0, bdG: 1, count: 1, dtr: 0.0, state: 0, locationId: String::new() };
-        Track { totalTime: 1, totalDistance: 1.0, validDistance: 1.0, validTime: 1, startTime: 1, startLatitude: 39.9, startLongitude: 116.4, locations: vec![point], totalSteps: 1, speedPerTenSec: vec![], stepsPerTenSec: vec![], segments: vec![] }
+        Track { totalTime: 1, totalDistance: 1.0, validDistance: 1.0, validTime: 1, startTime: 1, startLatitude: 39.9, startLongitude: 116.4, locations: vec![point], totalSteps: 1, speedPerTenSec: vec![], stepsPerTenSec: vec![], segments: vec![], altitude_gain_override: None }
     }
     #[test] fn top_level_coordinate_is_derived_from_first_point() { assert!(sample_track().validate_consistency().is_ok()); let mut invalid = sample_track(); invalid.startLatitude = 38.9; assert!(invalid.validate_consistency().is_err()); }
     #[test] fn empty_track_is_rejected() { let mut track = sample_track(); track.locations.clear(); assert!(track.validate_consistency().is_err()); }

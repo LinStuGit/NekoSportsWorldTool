@@ -275,6 +275,18 @@ fn build_laps(track: &Track, start_ms: i64) -> Vec<Value> {
             gain = 0.0;
         }
     }
+    if let Some(target) = track.altitude_gain_override {
+        let natural = laps.iter().map(|lap| lap["elevationGain"].as_f64().unwrap_or(0.0)).sum::<f64>();
+        if natural > f64::EPSILON {
+            let scale = target / natural;
+            for lap in &mut laps {
+                let gain = lap["elevationGain"].as_f64().unwrap_or(0.0);
+                lap["elevationGain"] = Value::from(round_to(gain * scale, 2));
+            }
+        } else if let Some(last) = laps.last_mut() {
+            last["elevationGain"] = Value::from(round_to(target, 2));
+        }
+    }
     laps
 }
 
