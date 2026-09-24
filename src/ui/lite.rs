@@ -155,8 +155,9 @@ fn draw_top_bar(app: &App, ctx: &egui::Context) {
     });
 }
 
-/// Material 3 底部导航（文字标签版）。
-fn nav(ui: &mut egui::Ui, page: &mut Page) {
+/// Material 3 底部导航（文字标签版）。返回各项响应供离屏布局测试断言。
+fn nav(ui: &mut egui::Ui, page: &mut Page) -> Vec<egui::Response> {
+    let mut responses = Vec::new();
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let items = [
@@ -165,8 +166,9 @@ fn nav(ui: &mut egui::Ui, page: &mut Page) {
             (Page::Log, "日志"),
             (Page::About, "关于"),
         ];
-        let gap = 8.0;
-        let width = (ui.available_width() - gap * (items.len() as f32 - 1.0)) / items.len() as f32;
+        let n = items.len() as f32;
+        let spacing = ui.spacing().item_spacing.x;
+        let width = (ui.available_width() - spacing * (n - 1.0)) / n;
         for (target, label) in items {
             let selected = *page == target;
             let btn = if selected {
@@ -182,13 +184,14 @@ fn nav(ui: &mut egui::Ui, page: &mut Page) {
                     .stroke(Stroke::NONE)
                     .rounding(egui::Rounding::same(22.0))
             };
-            if ui.add_sized([width, 42.0], btn).clicked() {
+            responses.push(ui.add_sized([width, 42.0], btn));
+            if responses.last().map(|r| r.clicked()).unwrap_or(false) {
                 *page = target;
             }
-            ui.add_space(gap);
         }
     });
     ui.add_space(6.0);
+    responses
 }
 
 // ── 首页 ────────────────────────────────────────────────────
@@ -562,4 +565,83 @@ fn about_page(app: &mut App, ui: &mut egui::Ui) {
                 );
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 底部导航在手机/桌面宽度下都不越界且保持触控高度。
+    #[test]
+    fn nav_bar_fits_phone_and_desktop_widths() {
+        for width in [320.0, 360.0, 412.0, 880.0] {
+            let ctx = egui::Context::default();
+            let mut rects = Vec::new();
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 720.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(raw, |ctx| {
+                egui::TopBottomPanel::bottom("lite_nav_bar").show(ctx, |ui| {
+                    let mut page = Page::Home;
+                    rects = nav(ui, &mut page).into_iter().map(|r| r.rect).collect();
+                });
+            });
+            assert_eq!(rects.len(), 4, "width={width}");
+            for rect in &rects {
+                assert!(rect.is_finite() && rect.width() > 0.0, "width={width}: {rect:?}");
+                assert!(rect.max.x <= width + 0.5, "width={width}: {rects:?}");
+                assert!(rect.height() >= 40.0, "width={width}: {rect:?}");
+            }
+        }
+    }
+
+    /// Material 卡片与其中的分段按钮/下拉框在手机宽度内不越界。
+    #[test]
+    fn card_and_segmented_fit_narrow_widths() {
+        for width in [320.0, 360.0] {
+            let ctx = egui::Context::default();
+            let mut rects = Vec::new();
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 720.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(raw, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    card(ui, "开始时间", |ui| {
+                        ui.horizontal(|ui| {
+                            let half = (ui.available_width() - 8.0) / 2.0;
+                            for label in ["随机时刻", "指定时刻"] {
+                                let btn = egui::Button::new(RichText::new(label))
+                                    .fill(CARD)
+                                    .stroke(Stroke::new(1.0_f32, OUTLINE))
+                                    .rounding(egui::Rounding::same(22.0));
+                                rects.push(ui.add_sized([half, 40.0], btn).rect);
+                            }
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("日期");
+                            let mut days_ago = 0i64;
+                            egui::ComboBox::from_id_salt("test_days_ago")
+                                .width(96.0)
+                                .selected_text("今天")
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut days_ago, 0, "今天");
+                                });
+                        });
+                        rects.push(ui.response().rect);
+                    });
+                });
+            });
+            for rect in &rects {
+                assert!(rect.max.x <= width + 0.5, "width={width}: {rects:?}");
+            }
+        }
+    }
 }
