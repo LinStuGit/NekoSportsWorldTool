@@ -264,4 +264,64 @@ assert!(min_m < 1.0, "点位吸附失败: {min_m}m");
         assert!(ks[0].contains("run_data/"));
         assert!(ks[1].starts_with("run_data/1320/1320403809.json"));
     }
+
+    /// 回归（上游 issue #26「记录达标但地图没有路线」）：
+    /// ① 无服务端围栏时 area 不得携带伪围栏（geoFencesJson 必须为 "[]"）；
+    /// ② 点型协议必须是详情页可识别的真人混合（无 -1 漂移、type 3 占比可观、
+    ///    哨兵 5/6、首点 ∈{0,7}），直线环与道路环两种底环下都成立。
+    #[test]
+    fn test_route_display_protocol_no_pseudo_fence() {
+        use crate::api::points::area_from_payload;
+        use serde_json::json;
+
+        // 无围栏字段的点位响应 → 空围栏（伪围栏会破坏整条路线解析）
+        let payload = json!({"runAreaId": 9});
+        let points = vec![json!({"lat": 1.0, "lon": 2.0}), json!({"lat": 1.1, "lon": 2.0}), json!({"lat": 1.1, "lon": 2.1})];
+        let area = area_from_payload(&payload, &points);
+        assert_eq!(area.geo_fences_json, "[]");
+        assert!(!area.freedom_show_fence);
+        assert_eq!(area.run_area_id, 9);
+
+        // 非数组/空数组围栏一律拒绝
+        assert_eq!(area_from_payload(&json!({"geoFencesJson": "not json"}), &[]).geo_fences_json, "[]");
+        assert_eq!(area_from_payload(&json!({"geoFencesJson": "[]"}), &[]).geo_fences_json, "[]");
+        assert_eq!(area_from_payload(&json!({"fences": {"lat": 1.0}}), &[]).geo_fences_json, "[]");
+        // 合法数组围栏保留
+        let ok = area_from_payload(&json!({"geoFencesJson": "[{\"lat\":1.0},{\"lat\":1.1}]"}), &[]);
+        assert_ne!(ok.geo_fences_json, "[]");
+        assert!(ok.freedom_show_fence);
+
+        // 两种底环下点型协议一致
+        let pts = sample_points();
+        let order = super::roads::angular_order(&pts);
+        let mut ring: Vec<(f64, f64)> = Vec::new();
+        for &i in &order {
+            ring.push(pts[i]);
+        }
+        ring.push(pts[order[0]]);
+        let mut dense_ring = Vec::new();
+        for w in ring.windows(2) {
+            for j in 0..8 {
+                let t = j as f64 / 8.0;
+                dense_ring.push((w[0].0 + (w[1].0 - w[0].0) * t, w[1].1 * t + w[0].1 * (1.0 - t)));
+            }
+        }
+        for seed in 0..8u64 {
+            for (tag, track) in [
+                ("直线环", build(2600.0, 960, seed, (38.9, 121.54), 1_788_958_186_123, &pts)),
+                ("道路环", super::generator::build_with_ring(2600.0, 960, seed, (38.9, 121.54), 1_788_958_186_123, &pts, Some(&dense_ring))),
+            ] {
+                let locs = &track.locations;
+                assert!(locs.iter().all(|p| p.ptype != -1), "{tag}: 漂移点未清除");
+                assert!([0, 7].contains(&locs[0].ptype), "{tag}: 首点型 {}", locs[0].ptype);
+                assert_eq!(locs[1].ptype, 5, "{tag}: 起点哨兵");
+                assert_eq!(locs.last().unwrap().ptype, 6, "{tag}: 终点哨兵");
+                // 真人 type=3 曲线点占比可观（详情页曲线路径识别）
+                let t3 = locs.iter().filter(|p| p.ptype == 3).count();
+                assert!(t3 * 100 >= locs.len() * 20, "{tag}: type3 占比 {t3}/{}", locs.len());
+                // 圆滑半径（GPS 精度）全部处于真实范围
+                assert!(locs.iter().all(|p| p.radius >= 1.4 && p.radius <= 5.1), "{tag}: radius 越界");
+            }
+        }
+    }
 }
