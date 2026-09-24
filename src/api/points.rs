@@ -217,8 +217,8 @@ fn value_as_bool(value: &Value) -> Option<bool> {
 
 fn usable_fence(value: &Value) -> bool {
     let text = value_as_json_string(value);
-    let text = text.trim();
-    !text.is_empty() && text != "null" && text != "[]"
+    let Ok(parsed) = serde_json::from_str::<Value>(text.trim()) else { return false; };
+    matches!(parsed, Value::Array(ref items) if !items.is_empty())
 }
 
 fn value_as_json_string(value: &Value) -> String {
