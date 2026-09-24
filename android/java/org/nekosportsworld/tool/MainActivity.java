@@ -23,6 +23,121 @@ public final class MainActivity extends NativeActivity {
     private native void nativeSubmitEdit(long id, String value);
     private native void nativeSetInsets(int left, int top, int right, int bottom);
     private native void nativeDeviceInfo(boolean initial, String info, String error);
+    private native void nativeLocation(String city, double lat, double lon, String error);
+
+    private static final int REQ_LOCATION = 4101;
+    private android.location.LocationListener locationListener;
+    private final android.os.Handler locationHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    /** lite 版：请求一次本机定位（权限弹窗 → 最近/实时定位 → 城市逆地理编码）。 */
+    public void requestLocation() {
+        runOnUiThread(() -> {
+            boolean fine = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            boolean coarse = checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            if (!fine && !coarse) {
+                requestPermissions(new String[]{
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION);
+                return;
+            }
+            readLocation();
+        });
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_LOCATION) return;
+        boolean granted = false;
+        for (int result : grantResults) {
+            if (result == android.content.pm.PackageManager.PERMISSION_GRANTED) granted = true;
+        }
+        if (granted) readLocation();
+        else nativeLocation("", 0, 0, "未授予定位权限，无法自动读取城市和定位锚点");
+    }
+
+    private void readLocation() {
+        try {
+            android.location.LocationManager lm = (android.location.LocationManager) getSystemService(LOCATION_SERVICE);
+            // 先用 10 分钟内的最近定位，避免每次都等 GPS 冷启动
+            android.location.Location best = bestLastKnown(lm);
+            if (best != null && System.currentTimeMillis() - best.getTime() < 10 * 60 * 1000L) {
+                deliver(best);
+                return;
+            }
+            if (locationListener != null) return; // 已在等待实时定位
+            locationListener = new android.location.LocationListener() {
+                @Override public void onLocationChanged(android.location.Location location) {
+                    finishLocationWait(location);
+                }
+            };
+            boolean any = false;
+            for (String provider : lm.getProviders(true)) {
+                if (android.location.LocationManager.GPS_PROVIDER.equals(provider)
+                    || android.location.LocationManager.NETWORK_PROVIDER.equals(provider)) {
+                    try {
+                        lm.requestLocationUpdates(provider, 1000L, 1f, locationListener,
+                            android.os.Looper.getMainLooper());
+                        any = true;
+                    } catch (Exception ignored) { }
+                }
+            }
+            locationHandler.postDelayed(() -> finishLocationWait(null), 20000L);
+            if (!any) finishLocationWait(null);
+        } catch (Throwable error) {
+            nativeLocation("", 0, 0, "定位失败: " + error);
+        }
+    }
+
+    private void finishLocationWait(android.location.Location location) {
+        if (locationListener == null) return;
+        android.location.LocationManager lm = (android.location.LocationManager) getSystemService(LOCATION_SERVICE);
+        lm.removeUpdates(locationListener);
+        locationListener = null;
+        locationHandler.removeCallbacksAndMessages(null);
+        if (location != null) { deliver(location); return; }
+        // 实时定位超时：退回最近一次历史定位
+        android.location.Location best = bestLastKnown(lm);
+        if (best != null) deliver(best);
+        else nativeLocation("", 0, 0, "未能获取定位，请开启系统定位服务后重试");
+    }
+
+    private android.location.Location bestLastKnown(android.location.LocationManager lm) {
+        android.location.Location best = null;
+        for (String provider : lm.getProviders(true)) {
+            android.location.Location fix = lm.getLastKnownLocation(provider);
+            if (fix != null && (best == null || fix.getTime() > best.getTime())) best = fix;
+        }
+        return best;
+    }
+
+    /** 上报坐标；城市名经 Geocoder 逆地理编码（网络请求，放后台线程）。 */
+    private void deliver(android.location.Location location) {
+        final double lat = location.getLatitude();
+        final double lon = location.getLongitude();
+        new Thread(() -> {
+            String city = null;
+            try {
+                android.location.Geocoder geocoder = new android.location.Geocoder(this, java.util.Locale.CHINA);
+                java.util.List<android.location.Address> list = geocoder.getFromLocation(lat, lon, 1);
+                if (list != null && !list.isEmpty()) {
+                    android.location.Address address = list.get(0);
+                    city = firstNonEmpty(address.getLocality(), address.getSubAdminArea(), address.getAdminArea());
+                }
+            } catch (Throwable ignored) { }
+            final String resolved = city == null ? "" : city;
+            runOnUiThread(() -> nativeLocation(resolved, lat, lon, ""));
+        }).start();
+    }
+
+    private static String firstNonEmpty(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) return value;
+        }
+        return null;
+    }
 
     public void requestDeviceInfo(boolean initial) {
         runOnUiThread(() -> {
@@ -227,6 +342,15 @@ public final class MainActivity extends NativeActivity {
     @Override protected void onDestroy() {
         if (editorDialog != null) editorDialog.dismiss();
         if (deviceInfoDialog != null) deviceInfoDialog.dismiss();
+        if (locationListener != null) {
+            try {
+                android.location.LocationManager lm =
+                    (android.location.LocationManager) getSystemService(LOCATION_SERVICE);
+                lm.removeUpdates(locationListener);
+            } catch (Throwable ignored) { }
+            locationListener = null;
+            locationHandler.removeCallbacksAndMessages(null);
+        }
         taskActive = false;
         updateScreenPolicy();
         super.onDestroy();

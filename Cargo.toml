@@ -17,6 +17,8 @@ winit = { path = "vendor/winit-0.30.13" }
 default = ["gui"]
 gui = ["dep:eframe", "dep:egui", "dep:egui_extras"]
 android = ["gui", "eframe/android-native-activity", "dep:android-activity", "dep:android_logger", "dep:jni", "dep:log", "dep:winit"]
+# 精简版：仅保留跑步页；启动后自动读取真实设备信息与 GPS 定位（城市/锚点）
+lite = []
 
 [dependencies]
 eframe = { version = "0.29", optional = true }

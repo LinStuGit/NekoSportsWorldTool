@@ -87,6 +87,10 @@ jobs:
         shell: pwsh
         run: ./android/build.ps1 -Abi "$env:ABI" -Profile "$env:PROFILE"
 
+      - name: Build Lite APK
+        shell: pwsh
+        run: ./android/build.ps1 -Abi "$env:ABI" -Profile "$env:PROFILE" -Lite
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:

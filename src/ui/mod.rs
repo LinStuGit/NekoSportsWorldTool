@@ -75,6 +75,10 @@ pub struct App {
     pub ai_confirm: Option<ai::AiBatchPlan>,
 
     pub tab: usize,
+    /// lite 版定位自动配置状态（仅 android+lite 编译路径使用）。
+    pub lite_loc_requested: bool,
+    pub lite_loc_fails: u32,
+    pub lite_loc_next_try: std::time::Instant,
     pub run_page: run::RunPage,
     pub ai_page: ai::AiPage,
     pub records_page: records::RecordsPage,
@@ -98,6 +102,8 @@ impl eframe::App for App {
         self.poll_messages();
         #[cfg(target_os = "android")]
         self.poll_device_info();
+        #[cfg(all(target_os = "android", feature = "lite"))]
+        self.poll_lite_location();
         crate::platform::set_keep_screen_on(self.run_busy || self.ai_busy || self.login_busy);
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
@@ -252,17 +258,25 @@ impl eframe::App for App {
 
         // ── 标签页 ──────────────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
-            mobile::tab_bar(ui, &mut self.tab);
-            ui.separator();
-            match self.tab {
-                0 => self.draw_run(ui),
-                1 => self.draw_ai(ui),
-                2 => self.draw_records(ui),
-                3 => self.draw_data(ui),
-                4 => self.draw_user(ui),
-                5 => self.draw_device(ui),
-                6 => self.log.render(ui),
-                _ => self.draw_about(ui),
+            #[cfg(feature = "lite")]
+            {
+                // lite 版：仅保留跑步页
+                self.draw_run(ui);
+            }
+            #[cfg(not(feature = "lite"))]
+            {
+                mobile::tab_bar(ui, &mut self.tab);
+                ui.separator();
+                match self.tab {
+                    0 => self.draw_run(ui),
+                    1 => self.draw_ai(ui),
+                    2 => self.draw_records(ui),
+                    3 => self.draw_data(ui),
+                    4 => self.draw_user(ui),
+                    5 => self.draw_device(ui),
+                    6 => self.log.render(ui),
+                    _ => self.draw_about(ui),
+                }
             }
         });
 
@@ -291,6 +305,63 @@ impl eframe::App for App {
         }
         self.draw_update_windows(ctx);
         crate::platform::sync_clipboard(ctx);
+    }
+}
+
+impl App {
+    /// lite 版：启动后自动读取本机定位，把真实城市与坐标写入设备身份并保存。
+    /// 失败自动重试（最多 5 次、间隔 10s）；成功后写入 location_from_gps 标记，
+    /// 真实坐标不受「大连默认配置」拦截规则影响。
+    #[cfg(all(target_os = "android", feature = "lite"))]
+    fn poll_lite_location(&mut self) {
+        let now = std::time::Instant::now();
+        if let Some(result) = crate::android::take_location() {
+            self.lite_loc_requested = false;
+            self.lite_loc_next_try = now + std::time::Duration::from_secs(10);
+            match result {
+                Ok(reply) => {
+                    self.device_buf.anchor_lat = reply.latitude;
+                    self.device_buf.anchor_lon = reply.longitude;
+                    if !reply.city.is_empty() {
+                        self.device_buf.city = reply.city;
+                    }
+                    self.device_buf.location_from_gps = true;
+                    match crate::api::model::save_identity(&self.device_buf) {
+                        Ok(()) => {
+                            self.identity = self.device_buf.clone();
+                            self.lite_loc_fails = 0;
+                            self.status = format!(
+                                "√ 已读取本机定位：{} ({:.6},{:.6})",
+                                self.identity.city, self.identity.anchor_lat, self.identity.anchor_lon
+                            );
+                            self.log.push("√  GPS 定位已写入设备身份（UUID 保持不变）");
+                        }
+                        Err(error) => self.status = format!("× 定位结果保存失败：{error}"),
+                    }
+                }
+                Err(error) => {
+                    self.lite_loc_fails += 1;
+                    self.status = format!("× {error}（第 {} 次）", self.lite_loc_fails);
+                }
+            }
+        }
+        let unconfigured = self.identity.has_unconfigured_default_location();
+        if !unconfigured {
+            return;
+        }
+        if !self.lite_loc_requested
+            && self.lite_loc_fails < 5
+            && now >= self.lite_loc_next_try
+        {
+            self.lite_loc_requested = true;
+            crate::android::request_location();
+            if self.lite_loc_fails == 0 {
+                self.status = "正在读取手机定位，请在弹窗中允许定位权限并保持定位服务开启…".into();
+            }
+        }
+        if self.lite_loc_fails >= 5 && !self.lite_loc_requested {
+            self.status = "× 定位多次失败：请检查系统定位服务与应用定位权限，重启应用重试".into();
+        }
     }
 }
 
@@ -330,6 +401,10 @@ impl App {
             popup: None,
             ai_confirm: None,
             tab: 0,
+            lite_loc_requested: false,
+            lite_loc_fails: 0,
+            // 首次定位延迟 3s：先让设备信息授权弹窗展示完
+            lite_loc_next_try: std::time::Instant::now() + std::time::Duration::from_secs(3),
             run_page: run::RunPage {
                 dist_min: config.dist_min,
                 dist_max: config.dist_max,

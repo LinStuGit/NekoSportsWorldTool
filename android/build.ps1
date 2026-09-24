@@ -7,6 +7,7 @@ param(
     [string]$BuildToolsVersion = '36.0.0',
     [string]$Platform = 'android-36',
     [string]$TargetDir = '',
+    [switch]$Lite,
     [switch]$SkipRust
 )
 $ErrorActionPreference = 'Stop'
@@ -25,7 +26,8 @@ $javaBin = Split-Path (Get-Command javac -ErrorAction Stop).Source
 $targetTriple = if ($Abi -eq 'arm64-v8a') { 'aarch64-linux-android' } else { 'x86_64-linux-android' }
 $targetKey = $targetTriple.Replace('-', '_').ToUpperInvariant()
 $deliveryDir = Join-Path $PSScriptRoot "build\$Abi-$Profile"
-$outputDir = Join-Path $TargetDir "package\$Abi-$Profile"
+$variantSuffix = if ($Lite) { '-lite' } else { '' }
+$outputDir = Join-Path $TargetDir "package\$Abi-$Profile$variantSuffix"
 $classesDir = Join-Path $outputDir 'classes'
 $dexDir = Join-Path $outputDir 'dex'
 $stagingDir = Join-Path $outputDir 'apk'
@@ -39,6 +41,13 @@ $packageSources = Join-Path $outputDir 'source'
 New-Item -ItemType Directory -Force -Path $packageSources | Out-Null
 foreach ($sourceName in @('java','res','AndroidManifest.xml')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $sourceName) -Destination $packageSources -Recurse -Force
+}
+# 标准版剔除定位权限（仅 lite 版使用 GPS 定位），保持标准 APK 权限不变
+if (-not $Lite) {
+    $manifestPath = Join-Path $packageSources 'AndroidManifest.xml'
+    $lines = Get-Content -LiteralPath $manifestPath
+    $lines | Where-Object { $_ -notmatch 'ACCESS_(FINE|COARSE)_LOCATION' } |
+        Set-Content -LiteralPath $manifestPath -Encoding utf8
 }
 
 function Invoke-Checked([string]$Executable, [string[]]$Arguments) {
@@ -63,7 +72,8 @@ try {
     Push-Location $projectRoot
     try {
         if (-not $SkipRust) {
-            $cargoArgs = @('build','--locked','--target',$targetTriple,'--features','android','--lib')
+            $features = if ($Lite) { 'android,lite' } else { 'android' }
+            $cargoArgs = @('build','--locked','--target',$targetTriple,'--features',$features,'--lib')
             if ($Profile -eq 'release') { $cargoArgs += '--release' }
             Invoke-Checked 'cargo' $cargoArgs
         }
@@ -115,7 +125,7 @@ $keyStore = Join-Path $signingDir 'local-test.keystore'
 if (-not (Test-Path -LiteralPath $keyStore)) {
     Invoke-Checked (Join-Path $javaBin 'keytool.exe') @('-genkeypair','-keystore',$keyStore,'-storepass','android','-keypass','android','-alias','androiddebugkey','-keyalg','RSA','-keysize','2048','-validity','10000','-dname','CN=Android Debug,O=Android,C=US')
 }
-$finalApk = Join-Path $outputDir "NekoSportsWorldTool-$Abi.apk"
+$finalApk = Join-Path $outputDir "NekoSportsWorldTool-$Abi$variantSuffix.apk"
 Invoke-Checked (Join-Path $buildTools 'apksigner.bat') @('sign','--ks',$keyStore,'--ks-key-alias','androiddebugkey','--ks-pass','pass:android','--key-pass','pass:android','--out',$finalApk,$alignedApk)
 Invoke-Checked (Join-Path $buildTools 'apksigner.bat') @('verify','--verbose',$finalApk)
 Invoke-Checked (Join-Path $buildTools 'zipalign.exe') @('-c','-P','16','4',$finalApk)

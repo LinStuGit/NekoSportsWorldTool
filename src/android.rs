@@ -12,10 +12,18 @@ static EDITS: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
 static SCREEN_ON: AtomicBool = AtomicBool::new(false);
 static SAFE_INSETS: Mutex<[i32; 4]> = Mutex::new([0; 4]);
 static DEVICE_INFO: Mutex<Option<DeviceInfoReply>> = Mutex::new(None);
+static LOCATION: Mutex<Option<Result<LocationReply, String>>> = Mutex::new(None);
 
 pub(crate) struct DeviceInfoReply {
     pub initial: bool,
     pub result: Result<Option<crate::api::model::DeviceInfo>, String>,
+}
+
+/// 本机 GPS 实测定位（MainActivity.readLocation 上报）。
+pub(crate) struct LocationReply {
+    pub city: String,
+    pub latitude: f64,
+    pub longitude: f64,
 }
 
 #[no_mangle]
@@ -27,6 +35,7 @@ fn android_main(app: AndroidApp) {
     *APP.lock().unwrap() = Some(app.clone());
     EDITS.get_or_init(Default::default).lock().unwrap().clear();
     *DEVICE_INFO.lock().unwrap() = None;
+    *LOCATION.lock().unwrap() = None;
     SCREEN_ON.store(false, Ordering::Relaxed);
     let options = eframe::NativeOptions {
         run_and_return: false,
@@ -135,6 +144,37 @@ pub extern "system" fn Java_org_nekosportsworld_tool_MainActivity_nativeDeviceIn
         else if info.is_empty() { Ok(None) }
         else { serde_json::from_str(&info).map(Some).map_err(|_| "无法解析本机信息，请手动填写".into()) };
     *DEVICE_INFO.lock().unwrap() = Some(DeviceInfoReply { initial: initial != 0, result });
+    if let Some(context) = CONTEXT.lock().unwrap().as_ref() { context.request_repaint(); }
+}
+
+/// 请求一次本机定位（运行时权限弹窗 + 最近定位/实时定位 + 城市逆地理编码）。
+/// 结果经 [take_location] 取回。
+pub(crate) fn request_location() {
+    with_activity(|env, activity| {
+        env.call_method(activity, "requestLocation", "()V", &[])?;
+        Ok(())
+    });
+}
+
+pub(crate) fn take_location() -> Option<Result<LocationReply, String>> {
+    LOCATION.lock().unwrap().take()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_nekosportsworld_tool_MainActivity_nativeLocation(
+    mut env: JNIEnv<'_>, _activity: JObject<'_>, city: JString<'_>,
+    latitude: jni::sys::jdouble, longitude: jni::sys::jdouble, error: JString<'_>,
+) {
+    let Ok(city) = env.get_string(&city) else { return };
+    let city: String = city.into();
+    let Ok(error) = env.get_string(&error) else { return };
+    let error: String = error.into();
+    let result = if !error.is_empty() {
+        Err(error)
+    } else {
+        Ok(LocationReply { city, latitude, longitude })
+    };
+    *LOCATION.lock().unwrap() = Some(result);
     if let Some(context) = CONTEXT.lock().unwrap().as_ref() { context.request_repaint(); }
 }
 

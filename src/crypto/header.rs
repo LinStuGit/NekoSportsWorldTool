@@ -41,6 +41,10 @@ pub struct HeaderIdentity {
     /// 提交 body 的城市名
     #[serde(default = "default_city")]
     pub city: String,
+    /// 城市与锚点来自本机 GPS 实测（lite 版自动写入）；真实定位不受
+    /// 「大连默认配置」拦截规则影响（在大连上学的用户同样用真实坐标）。
+    #[serde(default)]
+    pub location_from_gps: bool,
 }
 
 pub fn random_mac() -> String {
@@ -68,7 +72,11 @@ impl HeaderIdentity {
     }
 
     /// 旧版本首次启动会写入大连默认值。未明确配置前禁止将它作为异地跑步位置使用。
+    /// GPS 实测写入的配置视为已明确配置（见 [HeaderIdentity::location_from_gps]）。
     pub fn has_unconfigured_default_location(&self) -> bool {
+        if self.location_from_gps {
+            return false;
+        }
         self.city.trim().is_empty()
             || self.city.trim() == crate::location::default_city()
             || self.anchor_coordinate().map(|c| c.is_default_dalian()).unwrap_or(true)
@@ -106,6 +114,7 @@ impl Default for HeaderIdentity {
             app_install_time: 0,
             mac_address: String::new(),
             city: default_city(),
+            location_from_gps: false,
         }
     }
 }
@@ -343,5 +352,25 @@ mod tests {
             ..Default::default()
         };
         assert!(!configured.has_unconfigured_default_location());
+    }
+
+    /// lite 版 GPS 实测定位不受「大连默认配置」拦截（在大连上学的用户
+    /// 城市名就是大连市，坐标也是实测值，必须放行）。
+    #[test]
+    fn gps_measured_location_bypasses_dalian_default_guard() {
+        let gps_in_dalian = HeaderIdentity {
+            city: "大连市".into(),
+            anchor_lat: 38.8752,
+            anchor_lon: 121.5512,
+            location_from_gps: true,
+            ..Default::default()
+        };
+        assert!(!gps_in_dalian.has_unconfigured_default_location());
+        // 旧字段缺省反序列化（已存在的 identity.json）仍保持拦截
+        let parsed: HeaderIdentity =
+            serde_json::from_str(r#"{"city":"大连市","anchor_lat":38.901678,"anchor_lon":121.540241}"#)
+                .unwrap();
+        assert!(parsed.has_unconfigured_default_location());
+        assert!(!parsed.location_from_gps);
     }
 }
