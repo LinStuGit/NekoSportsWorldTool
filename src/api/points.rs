@@ -271,7 +271,7 @@ fn point_xy_bd(p: &Value) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::track::roads::bd09_to_gcj02;
+    use crate::track::wire::bd09_to_gcj02;
 
     #[test]
     fn points_bd_prefers_bd_then_gcj_fallback() {
