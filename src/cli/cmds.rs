@@ -26,6 +26,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "semester" => cmd_semester(),
         "cheat" => cmd_cheat(&rest),
         "rank" => cmd_rank(&rest),
+        #[cfg(not(feature = "lite"))]
         "update" => cmd_update(&rest),
         "help" | "--help" | "-h" => {
             usage();
@@ -504,7 +505,7 @@ fn cmd_track_preview(rest: &[&str]) -> i32 {
             .locations
             .iter()
             .map(|p| serde_json::json!({
-                "lat": p.lat, "lng": p.lng,
+                "lat": p.gLat, "lng": p.gLng,
                 "t": p.totalTime, "dis": p.totalDis,
                 "speed": p.speed, "ptype": p.ptype,
                 "alt": p.bdA,
@@ -727,6 +728,8 @@ fn cmd_rank(rest: &[&str]) -> i32 {
     }
 }
 
+/// 自更新（特供 lite 版不编译：软件固定离线特供，不从远端拉取）。
+#[cfg(not(feature = "lite"))]
 fn cmd_update(rest: &[&str]) -> i32 {
     let flags = parse_flags(rest);
     let check_only = get(&flags, "check").is_some();

@@ -6,9 +6,13 @@ mod crypto;
 pub mod location;
 pub mod platform;
 pub mod template;
+// 特供 lite 版不拉取更新：update/relaunch 的调用点全部按 cfg 剔除，
+// 模块本体保留（消息协议仍引用 ReleaseInfo 类型），故 lite 下允许 dead code。
+#[cfg_attr(feature = "lite", allow(dead_code))]
 mod relaunch;
 mod textlog;
 mod track;
+#[cfg_attr(feature = "lite", allow(dead_code))]
 mod update;
 
 #[cfg(feature = "gui")]

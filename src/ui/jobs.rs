@@ -1,7 +1,10 @@
 //! 后台任务与消息处理：IP 获取 / 登录 / 刷新 / 消息协议分发。
 
-use super::{App, AI_DETAIL, AI_RECORDS, AI_LIST, CHEAT, IP, LOGIN_DONE, RANK, RECORDS, RUN_DETAIL, SEMESTER, UPDATE_CHK, UPDATE_DONE, UPDATE_PROG, USER};
+use super::{App, AI_DETAIL, AI_RECORDS, AI_LIST, CHEAT, IP, LOGIN_DONE, RANK, RECORDS, RUN_DETAIL, SEMESTER, USER};
+#[cfg(not(feature = "lite"))]
+use super::{UPDATE_CHK, UPDATE_DONE, UPDATE_PROG};
 use crate::api::model;
+#[cfg(not(feature = "lite"))]
 use crate::update::ReleaseInfo;
 
 impl App {
@@ -16,6 +19,8 @@ impl App {
     }
 
     /// 检查更新；manual=true 时切到关于页并显示状态。
+    /// 特供 lite 版不提供更新功能，此方法与下载方法均不编译。
+    #[cfg(not(feature = "lite"))]
     pub fn check_update(&mut self, manual: bool) {
         if self.update.checking || self.update.downloading {
             return;
@@ -40,6 +45,7 @@ impl App {
     }
 
     /// 下载并应用更新（桌面：解包替换 exe；Android：APK 落私有目录）。
+    #[cfg(not(feature = "lite"))]
     pub fn start_update_download(&mut self, rel: ReleaseInfo) {
         if self.update.downloading {
             return;

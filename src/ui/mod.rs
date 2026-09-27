@@ -319,6 +319,7 @@ impl App {
                 self.popup = None;
             }
         }
+        #[cfg(not(feature = "lite"))]
         self.draw_update_windows(ctx);
         crate::platform::sync_clipboard(ctx);
     }
@@ -455,13 +456,17 @@ impl App {
         if app.font_loaded.is_none() {
             app.log.push("未找到中文字体（msyh/simhei/simsun），界面中文可能显示为方块");
         }
-        // 上次更新残留的 .old/.new 顺手清掉
-        crate::update::cleanup_residue();
-        // 启动检查更新（silent 静默 / ask 询问 / off 关闭）
-        match app.config.update_check.as_str() {
-            "off" => {}
-            "ask" => app.update.ask_startup = true,
-            _ => app.check_update(false),
+        // 特供 lite 版不拉取更新（无检查/下载路径）；标准版保留残留清理与启动检查
+        #[cfg(not(feature = "lite"))]
+        {
+            // 上次更新残留的 .old/.new 顺手清掉
+            crate::update::cleanup_residue();
+            // 启动检查更新（silent 静默 / ask 询问 / off 关闭）
+            match app.config.update_check.as_str() {
+                "off" => {}
+                "ask" => app.update.ask_startup = true,
+                _ => app.check_update(false),
+            }
         }
         app.fetch_ip();
         #[cfg(target_os = "android")]

@@ -8,6 +8,8 @@ use crate::update::ReleaseInfo;
 use eframe::egui;
 
 /// 更新流程的 UI 状态（随 App 存活，消息协议回填）。
+/// 特供 lite 版不拉取更新，此结构仅被动存在（消息处理器仍引用其字段）。
+#[cfg_attr(feature = "lite", allow(dead_code))]
 #[derive(Default)]
 pub struct UpdateUi {
     pub checking: bool,
@@ -25,6 +27,7 @@ pub struct UpdateUi {
     pub ask_startup: bool,
 }
 
+#[cfg_attr(feature = "lite", allow(dead_code))]
 #[derive(Clone)]
 pub enum FinishAction {
     /// 桌面：替换完成，等待重启。
@@ -39,6 +42,12 @@ impl App {
         ui.heading("NekoSportsWorldTool");
         ui.add_space(6.0);
         ui.label(format!("当前版本：v{}", crate::platform::version_name()));
+        #[cfg(feature = "lite")]
+        {
+            ui.colored_label(theme::ok(), "广西职业技术大学特供版");
+            ui.label("内置校园离线路网，仅支持广西职业技术大学；仅供学习研究，不提供在线更新。");
+            ui.add_space(6.0);
+        }
         let repo = if cfg!(target_os = "android") {
             crate::update::REPO_FORK
         } else {
@@ -50,6 +59,13 @@ impl App {
         );
         ui.add_space(10.0);
 
+        #[cfg(not(feature = "lite"))]
+        self.draw_about_update(ui);
+    }
+
+    /// 检查 / 版本信息 / 启动检查模式（特供 lite 版不编译此节，无任何更新路径）。
+    #[cfg(not(feature = "lite"))]
+    fn draw_about_update(&mut self, ui: &mut egui::Ui) {
         // ── 检查 / 版本信息 ────────────────────────────────────
         ui.horizontal(|ui| {
             let busy = self.update.checking || self.update.downloading;
@@ -141,6 +157,7 @@ impl App {
         );
     }
 
+    #[cfg(not(feature = "lite"))]
     fn draw_download_progress(&self, ui: &mut egui::Ui) {
         let bar = egui::ProgressBar::new(self.update.fraction())
             .text(self.update.progress_text());
@@ -148,6 +165,7 @@ impl App {
     }
 
     /// 全局窗口：启动询问 / 确认更新 / 更新收尾（不依赖当前标签页）。
+    #[cfg(not(feature = "lite"))]
     pub fn draw_update_windows(&mut self, ctx: &egui::Context) {
         if self.update.ask_startup {
             let mut done: Option<&str> = None;
@@ -297,6 +315,7 @@ impl App {
     }
 }
 
+#[cfg_attr(feature = "lite", allow(dead_code))]
 impl UpdateUi {
     fn fraction(&self) -> f32 {
         match self.total {

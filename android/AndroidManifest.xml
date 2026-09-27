@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="org.nekosportsworld.tool" android:versionCode="20503" android:versionName="0.2.5-android.3">
+    package="org.nekosportsworld.tool" android:versionCode="30001" android:versionName="0.3.0-android.1">
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- lite 版读取真实定位（城市/定位锚点自动填写）；标准版打包时 build.ps1 会剔除以下两行 -->

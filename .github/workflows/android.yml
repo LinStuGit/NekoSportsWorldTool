@@ -83,10 +83,6 @@ jobs:
           path: android/.signing
           key: neko-android-signing-v1
 
-      - name: Build APK
-        shell: pwsh
-        run: ./android/build.ps1 -Abi "$env:ABI" -Profile "$env:PROFILE"
-
       - name: Build Lite APK
         shell: pwsh
         run: ./android/build.ps1 -Abi "$env:ABI" -Profile "$env:PROFILE" -Lite
