@@ -296,10 +296,14 @@ mod tests {
     fn points_bd_drops_invalid_points() {
         // BD 与 GCJ 全 0 → 丢弃，不产出 (0,0) 假打卡点
         assert!(points_bd(&[json!({"lat": 0.0, "lon": 0.0, "glat": 0.0, "glon": 0.0})]).is_empty());
-        // 字段缺失 → 丢弃
+        // BD 缺失且无 GCJ → 丢弃
         assert!(points_bd(&[json!({"lat": 38.9})]).is_empty());
-        assert!(points_bd(&[json!({"glat": 38.9, "glon": 121.5})]).is_empty());
         assert!(points_bd(&[json!({})]).is_empty());
+        // 仅 GCJ → 回退转换成功而非丢弃（往返误差在 1e-4 度内）
+        let (glat, glon) = bd09_to_gcj02(38.9, 121.5);
+        let out = points_bd(&[json!({"glat": glat, "glon": glon})]);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].0 - 38.9).abs() < 1e-4 && (out[0].1 - 121.5).abs() < 1e-4);
         // 有效点保留、无效点跳过
         assert_eq!(
             points_bd(&[json!({"lat": 1.0, "lon": 2.0}), json!({"lat": 0.0, "lon": 0.0})]),
