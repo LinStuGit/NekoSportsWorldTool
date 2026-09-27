@@ -93,6 +93,16 @@ pub fn run_full_flow(
 
     // ③ 轨迹生成（打卡点拟合环）
     let pts_bd = points::points_bd(&pts);
+    if pts_bd.is_empty() {
+        return Err("打卡点坐标全部无效（BD/GCJ 均缺失或为 0）——拒绝生成轨迹".into());
+    }
+    if pts_bd.len() < pts.len() {
+        log(&format!(
+            "⚠ [points] {} 个点位中 {} 个无有效坐标（BD/GCJ 均缺失或为 0），已跳过",
+            pts.len(),
+            pts.len() - pts_bd.len()
+        ));
+    }
     // 平均配速须落在有效窗口内（否则逐点速度无法全窗内），越界时修正时长
     let mut params = params.clone();
     let avg = params.dist / params.dur as f64;

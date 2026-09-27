@@ -241,20 +241,71 @@ pub fn center_bd(points: &[Value]) -> (f64, f64) {
 }
 
 /// 点位 → (lat, lon) BD 系数组（轨迹输入）。
+///
+/// 服务端实测存在「只填 GCJ（glat/glon）、BD 字段（lat/lon）置 0」的响应
+/// （围栏与必经点均已出现过，打卡点暴露在同一风险下），故优先取 lat/lon，
+/// 缺失或 (0,0) 时回退 glat/glon 并做 GCJ→BD 转换；两端都无效的点直接丢弃，
+/// 避免 (0,0) 假打卡点混入路网环规划。
 pub fn points_bd(points: &[Value]) -> Vec<(f64, f64)> {
-    points
-        .iter()
-        .filter_map(|p| {
-            let lat = p.get("lat")?.as_f64()?;
-            let lon = p.get("lon")?.as_f64()?;
-            Some((lat, lon))
-        })
-        .collect()
+    points.iter().filter_map(point_xy_bd).collect()
+}
+
+/// 取单个点位坐标（BD-09）。BD 优先，缺失/全 0 回退 GCJ 并转换，全无效返回 None。
+fn point_xy_bd(p: &Value) -> Option<(f64, f64)> {
+    let field = |k: &str| p.get(k).and_then(|v| v.as_f64());
+    let lat = field("lat").or_else(|| field("latitude"));
+    let lon = field("lon").or_else(|| field("lng")).or_else(|| field("longitude"));
+    if let (Some(a), Some(o)) = (lat, lon) {
+        if !(a == 0.0 && o == 0.0) {
+            return Some((a, o));
+        }
+    }
+    match (field("glat"), field("glon")) {
+        (Some(a), Some(o)) if !(a == 0.0 && o == 0.0) => {
+            Some(crate::track::roads::gcj02_to_bd09(a, o))
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::track::roads::bd09_to_gcj02;
+
+    #[test]
+    fn points_bd_prefers_bd_then_gcj_fallback() {
+        // BD lat/lon 正常 → 原样透传
+        assert_eq!(
+            points_bd(&[json!({"lat": 38.9, "lon": 121.5})]),
+            vec![(38.9, 121.5)]
+        );
+        // 兼容 latitude/lng 别名
+        assert_eq!(
+            points_bd(&[json!({"latitude": 38.9, "lng": 121.5})]),
+            vec![(38.9, 121.5)]
+        );
+        // BD 置 0、只填 GCJ → 回退转换（往返误差在 1e-4 度内）
+        let (glat, glon) = bd09_to_gcj02(38.9, 121.5);
+        let out = points_bd(&[json!({"lat": 0.0, "lon": 0.0, "glat": glat, "glon": glon})]);
+        let (la, lo) = out[0];
+        assert!((la - 38.9).abs() < 1e-4 && (lo - 121.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn points_bd_drops_invalid_points() {
+        // BD 与 GCJ 全 0 → 丢弃，不产出 (0,0) 假打卡点
+        assert!(points_bd(&[json!({"lat": 0.0, "lon": 0.0, "glat": 0.0, "glon": 0.0})]).is_empty());
+        // 字段缺失 → 丢弃
+        assert!(points_bd(&[json!({"lat": 38.9})]).is_empty());
+        assert!(points_bd(&[json!({"glat": 38.9, "glon": 121.5})]).is_empty());
+        assert!(points_bd(&[json!({})]).is_empty());
+        // 有效点保留、无效点跳过
+        assert_eq!(
+            points_bd(&[json!({"lat": 1.0, "lon": 2.0}), json!({"lat": 0.0, "lon": 0.0})]),
+            vec![(1.0, 2.0)]
+        );
+    }
 
     #[test]
     fn area_metadata_accepts_top_level_and_string_values() {
